@@ -4,7 +4,7 @@ Projeto criado para executar, no Google Colab, uma voz neural treinada a partir 
 
 `https://drive.google.com/drive/folders/13uBrrPLx--PlHho0fcz5xW8eYehimRcC?usp=sharing`
 
-O arquivo preferencial procurado e `neuralepoch_2nd_00024.pth`.
+O arquivo preferencial procurado e `epoch_2nd_00024.pth`. O notebook tambem aceita o nome antigo `neuralepoch_2nd_00024.pth`.
 O arquivo de configuracao YAML usado pelo notebook e baixado deste link:
 
 `https://drive.google.com/file/d/1y_fKsgq8h_uWVCPDmzc9bnR2vmnJA1Pb/view?usp=sharing`
@@ -35,3 +35,5 @@ Um arquivo `.pth` sozinho normalmente nao basta para sintetizar voz por texto. O
 - Piper: `.onnx` + `.json`.
 
 Se ainda faltar algum submodelo citado pelo YAML, como `Utils/ASR/epoch_00080.pth`, `Utils/JDC/bst.t7` ou `Utils/PLBERT/`, o erro indicara que esses arquivos auxiliares precisam estar disponiveis junto do checkpoint.
+
+Se aparecer `ValueError: numpy.dtype size changed`, significa que o runtime ficou com uma instalacao binaria inconsistente do NumPy apos instalar dependencias cientificas. O notebook reinstala `numpy==1.26.4` antes de importar `styletts2` para reduzir esse conflito.

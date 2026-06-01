@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from urllib.request import urlopen
@@ -12,6 +13,7 @@ from typing import Iterable
 DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/13uBrrPLx--PlHho0fcz5xW8eYehimRcC?usp=sharing"
 CONFIG_FILE_ID = "1y_fKsgq8h_uWVCPDmzc9bnR2vmnJA1Pb"
 TARGET_CHECKPOINT_NAME = "neuralepoch_2nd_00024.pth"
+TARGET_CHECKPOINT_NAMES = (TARGET_CHECKPOINT_NAME, "epoch_2nd_00024.pth")
 MODEL_ROOT = Path("/content/voz_neural")
 OUTPUT_DIR = Path("/content/audios_gerados")
 COLAB_DRIVE_ROOT = Path("/content/drive")
@@ -69,16 +71,14 @@ def copy_tree_contents(source_dir: Path, output_dir: Path) -> None:
 def copy_from_mounted_drive(
     drive_root: Path = COLAB_DRIVE_ROOT,
     output_dir: Path = MODEL_ROOT,
-    checkpoint_name: str = TARGET_CHECKPOINT_NAME,
 ) -> bool:
     if not drive_root.exists():
         return False
 
-    matches = sorted(drive_root.rglob(checkpoint_name))
-    if not matches:
+    checkpoint_path = select_checkpoint_path(drive_root)
+    if not checkpoint_path:
         return False
 
-    checkpoint_path = matches[0]
     source_root = infer_model_project_root(checkpoint_path)
     print(f"Checkpoint encontrado no Google Drive: {checkpoint_path}")
     print(f"Copiando arquivos de {source_root} para {output_dir}...")
@@ -136,13 +136,35 @@ def nearest_config_for_checkpoint(checkpoint: Path, root: Path, patterns: tuple[
     return candidates[0]
 
 
-def find_coqui_bundle(root: Path) -> ModelBundle | None:
+def checkpoint_epoch(path: Path) -> int:
+    match = re.search(r"epoch_2nd_(\d+)\.pth$", path.name)
+    if not match:
+        return -1
+    return int(match.group(1))
+
+
+def select_checkpoint_path(root: Path) -> Path | None:
     pth_files = sorted(root.rglob("*.pth"))
     if not pth_files:
         return None
 
-    target = [path for path in pth_files if path.name == TARGET_CHECKPOINT_NAME]
-    model_path = target[0] if target else pth_files[0]
+    for target_name in TARGET_CHECKPOINT_NAMES:
+        matches = [path for path in pth_files if path.name == target_name]
+        if matches:
+            return sorted(matches)[0]
+
+    epoch_files = [path for path in pth_files if checkpoint_epoch(path) >= 0]
+    if epoch_files:
+        return sorted(epoch_files, key=lambda path: (checkpoint_epoch(path), str(path)), reverse=True)[0]
+
+    return pth_files[0]
+
+
+def find_coqui_bundle(root: Path) -> ModelBundle | None:
+    model_path = select_checkpoint_path(root)
+    if not model_path:
+        return None
+
     config_path = nearest_config_for_checkpoint(model_path, root, ("config.json",))
     if not config_path:
         return None
@@ -151,12 +173,10 @@ def find_coqui_bundle(root: Path) -> ModelBundle | None:
 
 
 def find_styletts2_bundle(root: Path) -> ModelBundle | None:
-    pth_files = sorted(root.rglob("*.pth"))
-    if not pth_files:
+    model_path = select_checkpoint_path(root)
+    if not model_path:
         return None
 
-    target = [path for path in pth_files if path.name == TARGET_CHECKPOINT_NAME]
-    model_path = target[0] if target else pth_files[0]
     config_path = nearest_config_for_checkpoint(model_path, root, ("*.yml", "*.yaml"))
     if not config_path:
         return None
