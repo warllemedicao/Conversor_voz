@@ -2,9 +2,10 @@
 
 Modulo principal do programa.
 
-Ele faz quatro tarefas:
+Ele faz cinco tarefas:
 
-1. Baixa a pasta publica do Google Drive usando `gdown`.
+1. Importa os arquivos do modelo para `/content/voz_neural`.
+   Primeiro procura o checkpoint no Drive montado e copia a pasta encontrada. Se nao encontrar, baixa a pasta publica do Google Drive usando `gdown`.
 2. Procura automaticamente o modelo de voz, priorizando `neuralepoch_2nd_00024.pth`.
 3. Baixa tambem o arquivo YAML informado separadamente:
    `https://drive.google.com/file/d/1y_fKsgq8h_uWVCPDmzc9bnR2vmnJA1Pb/view?usp=sharing`

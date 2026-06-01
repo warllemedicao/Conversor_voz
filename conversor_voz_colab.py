@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ CONFIG_FILE_ID = "1y_fKsgq8h_uWVCPDmzc9bnR2vmnJA1Pb"
 TARGET_CHECKPOINT_NAME = "neuralepoch_2nd_00024.pth"
 MODEL_ROOT = Path("/content/voz_neural")
 OUTPUT_DIR = Path("/content/audios_gerados")
+COLAB_DRIVE_ROOT = Path("/content/drive")
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,59 @@ def download_config_file(file_id: str = CONFIG_FILE_ID, output_dir: Path = MODEL
     config_path = output_dir / "styletts2_config.yml"
     run_command(["gdown", "--id", file_id, "-O", str(config_path)])
     return config_path
+
+
+def infer_model_project_root(checkpoint_path: Path) -> Path:
+    for parent in checkpoint_path.parents:
+        has_styletts_assets = (parent / "Utils").exists() or (parent / "Models").exists()
+        if has_styletts_assets:
+            return parent
+    return checkpoint_path.parent
+
+
+def copy_tree_contents(source_dir: Path, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for source_path in source_dir.rglob("*"):
+        relative_path = source_path.relative_to(source_dir)
+        target_path = output_dir / relative_path
+        if source_path.is_dir():
+            target_path.mkdir(parents=True, exist_ok=True)
+        else:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+
+
+def copy_from_mounted_drive(
+    drive_root: Path = COLAB_DRIVE_ROOT,
+    output_dir: Path = MODEL_ROOT,
+    checkpoint_name: str = TARGET_CHECKPOINT_NAME,
+) -> bool:
+    if not drive_root.exists():
+        return False
+
+    matches = sorted(drive_root.rglob(checkpoint_name))
+    if not matches:
+        return False
+
+    checkpoint_path = matches[0]
+    source_root = infer_model_project_root(checkpoint_path)
+    print(f"Checkpoint encontrado no Google Drive: {checkpoint_path}")
+    print(f"Copiando arquivos de {source_root} para {output_dir}...")
+    copy_tree_contents(source_root, output_dir)
+    return True
+
+
+def import_model_files(drive_root: Path = COLAB_DRIVE_ROOT, output_dir: Path = MODEL_ROOT) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_from_drive = copy_from_mounted_drive(drive_root=drive_root, output_dir=output_dir)
+    if not copied_from_drive:
+        print("Checkpoint nao encontrado no Drive montado. Baixando pasta publica com gdown...")
+        download_drive_folder(output_dir=output_dir)
+
+    print("Salvando YAML de configuracao dentro do Colab...")
+    download_config_file(output_dir=output_dir)
+    return output_dir
 
 
 def iter_files(root: Path) -> Iterable[Path]:
@@ -138,8 +193,8 @@ def detect_model_bundle(root: Path) -> ModelBundle:
         )
 
     raise RuntimeError(
-        "Nao encontrei modelo suportado. Esperado: Coqui TTS com config.json + .pth, "
-        "ou Piper com .onnx."
+        "Nao encontrei modelo suportado. Esperado: StyleTTS2 com .yml/.yaml + .pth, "
+        "Coqui TTS com config.json + .pth, ou Piper com .onnx."
     )
 
 
@@ -250,11 +305,11 @@ def create_gradio_app(synthesizer: NeuralVoiceSynthesizer):
     return demo
 
 
-def main() -> None:
-    print("Baixando pasta do Google Drive...")
-    root = download_drive_folder()
-    print("Baixando arquivo YAML de configuracao...")
-    download_config_file(output_dir=root)
+def main(import_files: bool = False) -> None:
+    root = MODEL_ROOT
+    if import_files:
+        root = import_model_files()
+
     print_file_report(root)
 
     bundle = detect_model_bundle(root)

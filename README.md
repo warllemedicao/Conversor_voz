@@ -22,7 +22,6 @@ O arquivo de configuracao YAML usado pelo notebook e baixado deste link:
 - `conversor_voz_one_click_colab.ipynb`: notebook one-click para Colab.
 - `conversor_voz_colab.py`: modulo Python com download, deteccao do modelo, sintese e interface.
 - `conversor_voz_requirements_colab.txt`: dependencias instaladas pelo notebook.
-- `conversor_voz_teste_voz_treinada_colab.ipynb`: notebook antigo de teste, preservado com nome padronizado.
 
 Cada arquivo principal possui um `.md` ao lado explicando sua funcao.
 
