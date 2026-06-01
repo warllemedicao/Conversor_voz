@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from urllib.request import urlopen
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -36,7 +37,12 @@ def download_drive_folder(folder_url: str = DRIVE_FOLDER_URL, output_dir: Path =
 def download_config_file(file_id: str = CONFIG_FILE_ID, output_dir: Path = MODEL_ROOT) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     config_path = output_dir / "styletts2_config.yml"
-    run_command(["gdown", "--id", file_id, "-O", str(config_path)])
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        with urlopen(url, timeout=60) as response:
+            config_path.write_bytes(response.read())
+    except Exception:
+        run_command(["gdown", "--id", file_id, "-O", str(config_path)])
     return config_path
 
 

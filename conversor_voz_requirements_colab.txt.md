@@ -2,6 +2,8 @@
 
 Lista as bibliotecas Python usadas pelo notebook no Google Colab.
 
+No notebook atual, as dependencias sao instaladas depois que os arquivos do modelo ja foram importados para `/content/voz_neural`.
+
 - `gdown`: baixa a pasta publica do Google Drive.
 - `gradio`: cria a caixa de texto e os componentes de audio/download.
 - `pydub` e `soundfile`: manipulam arquivos de audio.

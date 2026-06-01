@@ -13,9 +13,10 @@ O arquivo de configuracao YAML usado pelo notebook e baixado deste link:
 
 1. Abra o notebook `conversor_voz_one_click_colab.ipynb` no Google Colab.
 2. Ative GPU em `Ambiente de execucao > Alterar tipo de ambiente de execucao > T4 GPU`.
-3. Clique em `Executar tudo`.
-4. Quando a interface abrir, digite uma frase e pressione Enter.
-5. O audio gerado aparece como player e como arquivo para download.
+3. Execute as celulas em ordem.
+4. Autorize o login do Google Drive quando a celula de montagem solicitar.
+5. Quando a interface abrir, digite uma frase e pressione Enter.
+6. O audio gerado aparece como player e como arquivo para download.
 
 ## Arquivos do projeto
 
