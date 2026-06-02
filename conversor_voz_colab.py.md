@@ -16,3 +16,5 @@ Ele faz cinco tarefas:
 5. Abre uma interface Gradio onde o usuario digita uma frase, pressiona Enter e recebe um arquivo `.wav` para ouvir e baixar.
 
 O YAML lido indica StyleTTS2 porque contem chaves como `ASR_config`, `PLBERT_dir`, `model_params` e `preprocess_params`.
+
+Durante o carregamento do StyleTTS2, o modulo aplica um patch local em `torch.load` para usar `weights_only=False`. Isso e necessario porque checkpoints antigos do StyleTTS2/ASR podem falhar no PyTorch 2.6+ com `UnpicklingError` quando o novo padrao `weights_only=True` e usado.

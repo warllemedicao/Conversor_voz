@@ -224,6 +224,41 @@ def detect_model_bundle(root: Path) -> ModelBundle:
     )
 
 
+def patch_torch_load_for_styletts2():
+    import torch
+
+    original_load = torch.load
+
+    def load_with_legacy_checkpoint_support(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_load(*args, **kwargs)
+
+    torch.load = load_with_legacy_checkpoint_support
+    return original_load
+
+
+def restore_torch_load(original_load) -> None:
+    import torch
+
+    torch.load = original_load
+
+
+def report_styletts2_auxiliary_paths(config_path: Path) -> None:
+    config_text = config_path.read_text(encoding="utf-8", errors="ignore")
+    relative_paths = re.findall(r"(?:ASR_config|ASR_path|F0_path|PLBERT_dir):\s*([^,\n}]+)", config_text)
+    missing_paths = []
+    for relative_path in relative_paths:
+        candidate = config_path.parent / relative_path.strip()
+        if not candidate.exists():
+            missing_paths.append(candidate)
+
+    if missing_paths:
+        print("Aviso: arquivos auxiliares do StyleTTS2 nao encontrados localmente.")
+        print("O pacote styletts2 tentara baixar modelos padrao para esses itens:")
+        for path in missing_paths:
+            print(f"- {path}")
+
+
 class NeuralVoiceSynthesizer:
     def __init__(self, bundle: ModelBundle, output_dir: Path = OUTPUT_DIR):
         self.bundle = bundle
@@ -253,17 +288,21 @@ class NeuralVoiceSynthesizer:
             return
 
         if self.bundle.engine == "styletts2":
-            from styletts2 import tts
+            report_styletts2_auxiliary_paths(self.bundle.config_path)
+            original_torch_load = patch_torch_load_for_styletts2()
 
             previous_cwd = Path.cwd()
             os.chdir(self.bundle.config_path.parent)
             try:
+                from styletts2 import tts
+
                 self.tts = tts.StyleTTS2(
                     model_checkpoint_path=str(self.bundle.model_path),
                     config_path=str(self.bundle.config_path),
                 )
             finally:
                 os.chdir(previous_cwd)
+                restore_torch_load(original_torch_load)
             print("Modelo StyleTTS2 carregado.")
             return
 

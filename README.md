@@ -37,3 +37,5 @@ Um arquivo `.pth` sozinho normalmente nao basta para sintetizar voz por texto. O
 Se ainda faltar algum submodelo citado pelo YAML, como `Utils/ASR/epoch_00080.pth`, `Utils/JDC/bst.t7` ou `Utils/PLBERT/`, o erro indicara que esses arquivos auxiliares precisam estar disponiveis junto do checkpoint.
 
 Se aparecer `ValueError: numpy.dtype size changed`, significa que o runtime ficou com uma instalacao binaria inconsistente do NumPy apos instalar dependencias cientificas. O notebook reinstala `numpy==1.26.4` antes de importar `styletts2` para reduzir esse conflito.
+
+Se aparecer `UnpicklingError` relacionado a `weights_only`, isso vem da mudanca de padrao do PyTorch 2.6 ao carregar checkpoints. O carregador StyleTTS2 do projeto aplica `weights_only=False` durante a inicializacao do modelo, assumindo que os checkpoints usados sao confiaveis.
