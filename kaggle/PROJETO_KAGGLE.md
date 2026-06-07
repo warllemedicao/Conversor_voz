@@ -258,10 +258,10 @@ Audio referencia: /kaggle/working/Super_voz/data_reference/referencia_voz.wav
 
 Depois que o motor e detectado, instala somente as dependencias necessarias para ele.
 
-Para `styletts2`, instala:
+Para `styletts2`, instala a versao disponivel no PyPI/Kaggle:
 
 ```text
-styletts2
+styletts2==0.1.6
 gradio
 pydub
 soundfile

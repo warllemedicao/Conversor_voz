@@ -60,3 +60,5 @@ Essa celula gera o WAV, mostra um player e cria um link `Download do WAV` no pro
 ```
 
 A interface Gradio continua disponivel como opcional, mas enquanto ela estiver rodando a celula fica presa. Para gerar varios audios sem parar o notebook, use a celula `synthesize_for_notebook`.
+
+Observacao: o pacote `styletts2` deve ser instalado como `styletts2==0.1.6`, porque essa e a versao disponivel no PyPI usado pelo Kaggle.
