@@ -4,10 +4,11 @@ Use `conversor_voz_kaggle.ipynb` em um notebook Kaggle com GPU e internet ligada
 
 ## Como rodar
 
-1. **Configure o Secret:** No menu superior do Kaggle, vá em **Add-ons** > **Secrets**. Adicione um secret chamado `HF_TOKEN` com o valor do seu token do Hugging Face (disponível em hf.co/settings/tokens). Isso aumenta a velocidade de download e evita avisos de autenticação.
-2. Abra `conversor_voz_kaggle.ipynb`.
-3. Clique em `Run All`.
-4. O notebook deve preparar dependencias, baixar o modelo, carregar a voz e gerar um WAV.
+1. **GPU Recomendada:** Use a **Tesla T4**. A GPU Tesla P100 (padrao em alguns kernels) **nao e compativel** com o PyTorch moderno e causara erro de CUDA. Mude em **Settings** -> **Accelerator**.
+2. **Configure o Secret:** No menu superior do Kaggle, vá em **Add-ons** > **Secrets**. Adicione um secret chamado `HF_TOKEN` com o valor do seu token do Hugging Face.
+3. Abra `conversor_voz_kaggle.ipynb`.
+4. Clique em `Run All`.
+5. O notebook deve preparar dependencias, baixar o modelo (de forma seletiva para economizar banda), carregar a voz e gerar um WAV.
 
 Se alguma etapa falhar, a execucao para e grava o traceback em:
 
@@ -15,7 +16,12 @@ Se alguma etapa falhar, a execucao para e grava o traceback em:
 /kaggle/working/super_voz_kaggle.log
 ```
 
+## Download Otimizado
+
+Diferente de versoes anteriores, o script nao baixa mais todos os checkpoints (~9GB). Ele baixa apenas os metadados e os pesos principais (`best_model.pth`), reduzindo o tempo de download significativamente.
+
 ## Decisao importante sobre NumPy/SciPy
+... (resto do arquivo)
 
 O notebook nao reinstala `numpy`, `scipy` nem `pandas`. O Kaggle ja carrega esse stack no ambiente do kernel, e trocar essas bibliotecas durante a sessao causa erros como:
 

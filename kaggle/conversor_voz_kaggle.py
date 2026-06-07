@@ -77,8 +77,12 @@ def fix_styletts2_config_paths(config_path: Path) -> None:
 HF_REPO_ID = "warllem/Super_voz"
 MODEL_ROOT = Path("/kaggle/working/Super_voz")
 OUTPUT_DIR = Path("/kaggle/working/audios_gerados")
-HF_ALLOW_PATTERNS = (
-    "model/**",
+HF_METADATA_PATTERNS = (
+    "model/*.yml",
+    "model/*.yaml",
+    "model/*.json",
+    "model/*.txt",
+    "model/Utils/**",
     "docs/**",
     "inference/**",
     "tokenizer/**",
@@ -125,20 +129,62 @@ def download_hf_repo(
     repo_id: str = HF_REPO_ID,
     output_dir: Path = MODEL_ROOT,
     token: str | None = None,
-    allow_patterns: tuple[str, ...] = HF_ALLOW_PATTERNS,
 ) -> Path:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download, HfApi
 
     token = token or get_hf_token()
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Baixar metadados e arquivos auxiliares (pequenos)
+    print("Baixando metadados e arquivos auxiliares...")
     snapshot_download(
         repo_id=repo_id,
         repo_type="model",
         local_dir=str(output_dir),
         local_dir_use_symlinks=False,
-        allow_patterns=allow_patterns,
+        allow_patterns=HF_METADATA_PATTERNS,
         token=token,
     )
+    
+    # 2. Identificar qual o melhor checkpoint sem baixar todos
+    print("Identificando checkpoint ideal...")
+    api = HfApi(token=token)
+    try:
+        remote_files = api.list_repo_files(repo_id=repo_id)
+    except Exception as e:
+        print(f"Aviso ao listar arquivos remotos: {e}. Usando fallback best_model.pth")
+        remote_files = ["model/best_model.pth"]
+
+    pth_files = [f for f in remote_files if f.startswith("model/") and f.endswith(".pth") and "Utils" not in f]
+    
+    # Lógica de seleção (similar ao select_checkpoint_path mas para nomes remotos)
+    selected_pth = "model/best_model.pth"
+    
+    best_metric = parse_key_value_file(output_dir / "model" / "best_metric.txt")
+    if best_metric:
+        source = best_metric.get("source_checkpoint")
+        if source and f"model/{source}" in pth_files:
+            selected_pth = f"model/{source}"
+    
+    if selected_pth not in pth_files and "model/latest_checkpoint.pth" in pth_files:
+        selected_pth = "model/latest_checkpoint.pth"
+    elif selected_pth not in pth_files and pth_files:
+        selected_pth = sorted(pth_files)[-1] # Pega o último/mais recente se nada for achado
+
+    # 3. Baixar apenas o arquivo selecionado
+    if not (output_dir / selected_pth).exists():
+        print(f"Baixando checkpoint selecionado: {selected_pth}")
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="model",
+            local_dir=str(output_dir),
+            local_dir_use_symlinks=False,
+            allow_patterns=[selected_pth],
+            token=token,
+        )
+    else:
+        print(f"Checkpoint {selected_pth} já existe localmente.")
+
     return output_dir
 
 

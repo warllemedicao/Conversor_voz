@@ -18,11 +18,14 @@ Nao ha arquivos Colab, audios locais ou pesos versionados nessa pasta.
 
 O notebook foi simplificado para funcionar com `Run All`:
 
-1. Prepara GPU/token e instala dependencias.
+1. Prepara GPU/token e instala dependencias. Verifica se a GPU e compativel (avisa se for Tesla P100).
 2. Cria `/kaggle/working/conversor_voz_kaggle.py`.
-3. Baixa o pacote `warllem/Super_voz`, detecta o modelo, carrega a voz e gera um audio.
-4. Permite gerar outro audio sem recarregar.
-5. Opcionalmente abre Gradio.
+3. Baixa o pacote `warllem/Super_voz`:
+   - Etapa 1: Baixa metadados, logs e arquivos auxiliares (leves).
+   - Etapa 2: Analisa o melhor checkpoint e baixa **apenas** o arquivo `.pth` selecionado (evitando download de ~9GB).
+4. Carrega a voz e gera um audio.
+5. Permite gerar outro audio sem recarregar.
+6. Opcionalmente abre Gradio.
 
 Se qualquer etapa falhar, o notebook para e salva o traceback em:
 
@@ -41,6 +44,8 @@ AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
 ```
 
 Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`), as salva em um arquivo de `constraints.txt` e instala as outras dependencias sem o parametro `-U` (Upgrade). Isso garante que o ambiente seja preparado rapidamente usando o cache do Kaggle e que as bibliotecas base nunca sejam alteradas. Ela instala `styletts2==0.1.6` com `--no-deps`.
+
+**Importante sobre GPU**: A GPU **Tesla P100** (sm_60) nao e compativel com as versoes recentes do PyTorch/StyleTTS2 (exige sm_70+). O notebook agora avisa para trocar para a **Tesla T4**.
 
 ## Origem dos arquivos
 
@@ -62,17 +67,10 @@ Destino no Kaggle:
 /kaggle/working/Super_voz
 ```
 
-Download seletivo:
+Download seletivo (Otimizado):
+- Metadados e Utils primeiro.
+- Checkpoint selecionado individualmente (ex: `best_model.pth`).
 
-```text
-model/**
-docs/**
-inference/**
-tokenizer/**
-data_reference/referencia_voz.wav
-data_reference/*.txt
-data_reference/*.csv
-```
 
 ## Arquivos corretos
 
