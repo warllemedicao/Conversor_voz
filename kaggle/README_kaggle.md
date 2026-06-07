@@ -31,3 +31,20 @@ O pacote principal de inferencia fica em:
 ## Selecao automatica
 
 O modulo `conversor_voz_kaggle.py` primeiro le `best_metric.txt`; se ele existir, usa `model/best_model.pth`. Se esse arquivo faltar, ele le os `train.log` e seleciona o epoch com menor `Validation loss`. O audio de referencia tambem e escolhido por logs quando houver uma linha com WAV e metrica; se nao houver, usa `data_reference/referencia_voz.wav`.
+
+## Geracao e download do audio
+
+A forma recomendada no Kaggle e usar a celula simples do notebook:
+
+```python
+texto = 'Digite aqui o texto que voce quer transformar em audio.'
+audio_path = synthesize_for_notebook(synthesizer, texto)
+```
+
+Essa celula gera o WAV, mostra um player e cria um link `Download do WAV` no proprio output do notebook. Os arquivos ficam em:
+
+```text
+/kaggle/working/audios_gerados
+```
+
+A interface Gradio continua disponivel como opcional, mas enquanto ela estiver rodando a celula fica presa. Para gerar varios audios sem parar o notebook, use a celula `synthesize_for_notebook`.

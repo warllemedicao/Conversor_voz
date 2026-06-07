@@ -497,13 +497,21 @@ def create_gradio_app(synthesizer: NeuralVoiceSynthesizer):
     return demo
 
 
-def prepare_model_files(download: bool = True) -> Path:
-    if download or not MODEL_ROOT.exists():
-        return download_hf_repo()
-    return MODEL_ROOT
+def display_notebook_audio(audio_path: str) -> str:
+    from IPython.display import Audio, FileLink, display
+
+    display(Audio(audio_path))
+    display(FileLink(audio_path, result_html_prefix="Download do WAV: "))
+    return audio_path
 
 
-def main(download: bool = False) -> None:
+def synthesize_for_notebook(synthesizer: NeuralVoiceSynthesizer, text: str) -> str:
+    audio_path = synthesizer.synthesize(text)
+    print(f"Audio gerado: {audio_path}")
+    return display_notebook_audio(audio_path)
+
+
+def load_synthesizer(download: bool = False) -> NeuralVoiceSynthesizer:
     root = prepare_model_files(download=download)
     print_file_report(root)
 
@@ -515,7 +523,17 @@ def main(download: bool = False) -> None:
     if bundle.reference_audio_path:
         print(f"Audio referencia: {bundle.reference_audio_path}")
 
-    synthesizer = NeuralVoiceSynthesizer(bundle)
+    return NeuralVoiceSynthesizer(bundle)
+
+
+def prepare_model_files(download: bool = True) -> Path:
+    if download or not MODEL_ROOT.exists():
+        return download_hf_repo()
+    return MODEL_ROOT
+
+
+def main(download: bool = False) -> None:
+    synthesizer = load_synthesizer(download=download)
     demo = create_gradio_app(synthesizer)
     demo.launch(share=True, debug=True)
 

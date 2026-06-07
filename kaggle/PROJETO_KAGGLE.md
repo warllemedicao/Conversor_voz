@@ -12,7 +12,10 @@ O notebook principal e:
 kaggle/conversor_voz_kaggle.ipynb
 ```
 
-Ele cria o modulo Python dentro de `/kaggle/working`, baixa o pacote `warllem/Super_voz`, detecta o melhor checkpoint do treino, escolhe o audio de referencia e abre uma interface Gradio para gerar arquivos WAV.
+Ele cria o modulo Python dentro de `/kaggle/working`, baixa o pacote `warllem/Super_voz`, detecta o melhor checkpoint do treino, escolhe o audio de referencia e carrega a voz. Depois disso, o usuario pode gerar audio de duas formas:
+
+1. Por uma celula simples do notebook, que mostra player e link de download direto.
+2. Pela interface Gradio opcional.
 
 ## Origem dos arquivos
 
@@ -260,15 +263,62 @@ O `numpy==1.26.4` e reinstalado para reduzir erro binario comum em ambientes com
 numpy.dtype size changed
 ```
 
-### 6. Interface de uso
+### 6. Carregamento da voz
 
-Por fim, carrega o modelo e abre uma interface Gradio.
+Depois de instalar as dependencias, o notebook carrega a voz uma unica vez com:
+
+```python
+synthesizer = load_synthesizer(download=False)
+```
+
+Esse objeto `synthesizer` fica disponivel nas proximas celulas. Assim, nao e preciso baixar nem carregar o modelo de novo a cada texto.
+
+### 7. Geracao simples com download direto
+
+A forma recomendada no Kaggle e usar a celula:
+
+```python
+texto = 'Digite aqui o texto que voce quer transformar em audio.'
+
+audio_path = synthesize_for_notebook(synthesizer, texto)
+audio_path
+```
+
+Ao executar essa celula, o programa:
+
+1. Gera o audio.
+2. Salva o WAV em `/kaggle/working/audios_gerados`.
+3. Mostra um player para ouvir o audio no output da celula.
+4. Mostra um link `Download do WAV` no output da celula.
+
+Os arquivos gerados ficam com nomes sequenciais:
+
+```text
+/kaggle/working/audios_gerados/audio_0001.wav
+/kaggle/working/audios_gerados/audio_0002.wav
+/kaggle/working/audios_gerados/audio_0003.wav
+```
+
+Para gerar outro audio, basta trocar o valor de `texto` e executar a mesma celula de novo.
+
+Essa opcao e melhor para Kaggle porque nao depende de procurar pastas na lateral do ambiente.
+
+### 8. Interface Gradio opcional
+
+Tambem existe uma celula opcional para abrir Gradio:
+
+```python
+demo = create_gradio_app(synthesizer)
+demo.launch(share=True, debug=True)
+```
 
 O usuario digita uma frase, pressiona Enter, e o sistema gera um arquivo WAV em:
 
 ```text
 /kaggle/working/audios_gerados
 ```
+
+Na interface Gradio, o audio aparece como player e como arquivo para download. Porem, enquanto essa celula estiver rodando, ela segura a execucao do notebook. Para executar outras celulas depois, e preciso parar a celula do Gradio.
 
 ## Arquivos criados na pasta kaggle
 
@@ -317,7 +367,14 @@ Config: /kaggle/working/Super_voz/model/config.yml
 Audio referencia: /kaggle/working/Super_voz/data_reference/referencia_voz.wav
 ```
 
-8. Use a interface Gradio para digitar frases e gerar WAV.
+8. Na celula de geracao simples, altere:
+
+```python
+texto = 'Digite aqui o texto que voce quer transformar em audio.'
+```
+
+9. Execute a celula para ouvir e baixar o WAV direto pelo output.
+10. Use a interface Gradio apenas se quiser a caixa de texto interativa.
 
 ## Comportamento esperado
 
@@ -331,6 +388,7 @@ Checkpoint: model/best_model.pth
 Config: model/config.yml
 Audio de referencia: data_reference/referencia_voz.wav
 Saida dos audios: /kaggle/working/audios_gerados
+Modo recomendado: celula synthesize_for_notebook com player e link de download
 ```
 
 Se o Hugging Face mudar a estrutura no futuro, o codigo ainda tenta detectar checkpoints, configs, logs e audios por busca automatica. Mas para a estrutura atual, os arquivos acima sao os corretos.
