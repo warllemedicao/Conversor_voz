@@ -267,13 +267,16 @@ pydub
 soundfile
 pyyaml
 numpy==1.26.4
+pandas==2.2.2
 ```
 
-O `numpy==1.26.4` e reinstalado para reduzir erro binario comum em ambientes com pacotes cientificos, como:
+O `numpy==1.26.4` e o `pandas==2.2.2` sao reinstalados juntos para reduzir erro binario comum em ambientes com pacotes cientificos, como:
 
 ```text
 numpy.dtype size changed
 ```
+
+Se esse erro ja tiver aparecido em uma sessao do Kaggle, reinicie o kernel/runtime e execute as celulas desde o inicio. Trocar NumPy no meio de uma sessao que ja importou bibliotecas cientificas pode deixar modulos compilados carregados em memoria.
 
 ### 6. Carregamento da voz
 
