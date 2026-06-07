@@ -337,18 +337,16 @@ Na interface Gradio, o audio aparece como player e como arquivo para download. P
 A pasta `kaggle` ficou com:
 
 ```text
-README.md
 README_kaggle.md
 PROJETO_KAGGLE.md
 conversor_voz_kaggle.ipynb
 conversor_voz_kaggle.py
 conversor_voz_requirements_kaggle.txt
-conversor_voz_colab.py
-conversor_voz_one_click_colab.ipynb
-conversor_voz_requirements_colab.txt
 ```
 
-Os pesos e audios nao ficam versionados dentro do GitHub. Eles sao baixados pelo notebook dentro do Kaggle, a partir do Hugging Face. Os arquivos realmente usados pelo fluxo Kaggle novo sao:
+Nao ha arquivos Colab dentro da pasta `kaggle`, para evitar conflito de notebook, modulo ou requirements. Os pesos e audios tambem nao ficam versionados dentro do GitHub. Eles sao baixados pelo notebook dentro do Kaggle, a partir do Hugging Face.
+
+Os arquivos usados pelo fluxo Kaggle sao:
 
 ```text
 conversor_voz_kaggle.ipynb
