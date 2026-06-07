@@ -18,7 +18,13 @@ Se alguma etapa falhar, a execucao para e grava o traceback em:
 
 ## Download Otimizado
 
-Diferente de versoes anteriores, o script nao baixa mais todos os checkpoints (~9GB). Ele baixa apenas os metadados e os pesos principais (`best_model.pth`), reduzindo o tempo de download significativamente. O sistema tambem foi ajustado para usar fonetizacao em **Portugues (PT-BR)** por padrao, corrigindo o sotaque de ingles.
+Diferente de versoes anteriores, o script nao baixa mais todos os checkpoints (~9GB). Ele baixa apenas os metadados e os pesos principais (`best_model.pth`), reduzindo o tempo de download significativamente. 
+
+### Fidelidade de Áudio e Sotaque
+O sistema foi aprimorado para garantir a máxima qualidade:
+- **Sincronização Automática**: Lê o seu vocabulário de treino (`phonemizer_config.txt`) para evitar áudio robótico.
+- **Entonação Correta**: Força o carregamento dos seus modelos de F0 e ASR, eliminando sotaques estrangeiros "padrão".
+- **Fonetização PT-BR**: Configurado para Português Brasileiro por padrão.
 
 ## Decisao importante sobre NumPy/SciPy
 ... (resto do arquivo)

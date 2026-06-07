@@ -45,13 +45,16 @@ AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
 
 Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`), as salva em um arquivo de `constraints.txt` e instala as outras dependencias sem o parametro `-U` (Upgrade). Isso garante que o ambiente seja preparado rapidamente usando o cache do Kaggle e que as bibliotecas base nunca sejam alteradas. Ela instala `styletts2==0.1.6` com `--no-deps`.
 
-## Otimização de Idioma (Sotaque)
+## Otimização de Idioma e Fidelidade de Áudio
 
-A biblioteca `styletts2==0.1.6` possui uma limitação onde o método `inference` ignora o parâmetro `language`, forçando o uso de `en-us` no fonemizador interno. 
-- **Solução aplicada**: Implementamos um **monkey-patch** na classe `GruutPhonemizer` dentro do script `conversor_voz_kaggle.py`.
-- **Resultado**: O sotaque é forçado para **Português (PT-BR)** durante a inicialização do modelo, garantindo que o treinamento (que é de alta qualidade em português) seja executado com a fonetização correta.
+A biblioteca `styletts2==0.1.6` possui limitações técnicas que causavam áudio distorcido e sotaque estrangeiro. Implementamos três correções profundas:
 
-**Importante sobre GPU**: A GPU **Tesla P100** (sm_60) nao e compativel com as versoes recentes do PyTorch/StyleTTS2 (exige sm_70+). O notebook agora avisa para trocar para a **Tesla T4**.
+1.  **Sincronização de Dicionário**: O script agora localiza automaticamente o arquivo `phonemizer_config.txt` do seu treino e sincroniza o dicionário interno da biblioteca. Isso evita que os fonemas do português sejam rejeitados ou lidos como silêncio/ruído.
+2.  **Resolução Agressiva de Caminhos**: O carregamento dos modelos auxiliares (**F0**, **ASR** e **PLBERT**) foi blindado. O programa agora faz uma busca recursiva para garantir que os pesos que você treinou sejam usados, eliminando o erro de "Invalid F0 model path" e mantendo a sua entonação original.
+3.  **Monkey-Patch de Sotaque**: O fonemizador `Gruut` é forçado a usar o padrão **PT-BR** durante a inicialização, garantindo a pronúncia brasileira correta sem a necessidade de comandos manuais a cada frase.
+
+### Importante sobre GPU
+... (resto do arquivo)
 
 ## Origem dos arquivos
 
