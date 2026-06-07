@@ -29,8 +29,11 @@ O erro `_no_nep50_warning` ocorre especificamente quando o `pip` atualiza o NumP
 
 Por isso, o fluxo atual:
 1. Detecta as versoes exatas de NumPy/SciPy/Pandas ja carregadas pelo Kaggle.
-2. Trava essas versoes no `pip install` (ex: `numpy==1.26.4`), impedindo atualizações acidentais por outras dependencias.
-3. Instala `styletts2==0.1.6` com `--no-deps`.
+2. Cria um arquivo `constraints.txt` com essas versoes.
+3. Instala as dependencias faltantes usando o Kaggle como cache (sem `-U`), garantindo que o NumPy/SciPy nao sejam alterados via `-c constraints.txt`.
+4. Instala `styletts2==0.1.6` com `--no-deps`.
+
+Isso torna a preparacao do ambiente muito mais rapida, evitando o download e a reinstalacao desnecessaria de centenas de megabytes.
 
 ## Origem dos arquivos
 
