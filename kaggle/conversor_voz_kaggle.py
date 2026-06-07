@@ -11,8 +11,8 @@ from typing import Iterable
 import numpy as np
 
 # Patch para compatibilidade com NumPy 2.0+ em pacotes antigos (ex: scipy/nltk)
-if not hasattr(np, \"_no_nep50_warning\"):
-    setattr(np, \"_no_nep50_warning\", lambda: (lambda x: x))
+if not hasattr(np, "_no_nep50_warning"):
+    setattr(np, "_no_nep50_warning", lambda: (lambda x: x))
 
 # Patch para LangChain 0.2+ (styletts2 busca em langchain.text_splitter)
 try:
@@ -21,9 +21,57 @@ except ImportError:
     try:
         import langchain_text_splitters
         import sys
-        sys.modules[\"langchain.text_splitter\"] = langchain_text_splitters
+        sys.modules["langchain.text_splitter"] = langchain_text_splitters
     except ImportError:
         pass
+
+
+def patch_styletts2_typing():
+    """Corrige TypeError: unsupported operand type(s) for /: 'str' and 'str' no PLBERT."""
+    try:
+        import styletts2.Utils.PLBERT.util
+        from pathlib import Path
+
+        original_load_plbert = styletts2.Utils.PLBERT.util.load_plbert
+
+        def patched_load_plbert(log_dir, *args, **kwargs):
+            if log_dir is not None and isinstance(log_dir, (str, bytes)):
+                log_dir = Path(log_dir)
+            return original_load_plbert(log_dir, *args, **kwargs)
+
+        styletts2.Utils.PLBERT.util.load_plbert = patched_load_plbert
+    except Exception:
+        pass
+
+
+def fix_styletts2_config_paths(config_path: Path) -> None:
+    """Transforma caminhos relativos no config.yml em caminhos absolutos."""
+    import yaml
+    if not config_path.exists():
+        return
+    
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        
+        changed = False
+        keys_to_fix = ["ASR_config", "ASR_path", "F0_path", "PLBERT_dir"]
+        model_params = config.get("model_params", {})
+        
+        for key in keys_to_fix:
+            val = model_params.get(key)
+            if val and isinstance(val, str) and not os.path.isabs(val):
+                abs_path = str((config_path.parent / val).resolve())
+                if os.path.exists(abs_path):
+                    model_params[key] = abs_path
+                    changed = True
+        
+        if changed:
+            with config_path.open("w", encoding="utf-8") as f:
+                yaml.dump(config, f, default_flow_style=False)
+            print(f"Caminhos no {config_path.name} atualizados para absolutos.")
+    except Exception as e:
+        print(f"Aviso ao corrigir caminhos do config: {e}")
 
 
 HF_REPO_ID = "warllem/Super_voz"
@@ -432,7 +480,9 @@ class NeuralVoiceSynthesizer:
             return
 
         if self.bundle.engine == "styletts2":
+            fix_styletts2_config_paths(self.bundle.config_path)
             report_styletts2_auxiliary_paths(self.bundle.config_path)
+            patch_styletts2_typing()
             original_torch_load = patch_torch_load_for_styletts2()
             previous_cwd = Path.cwd()
             os.chdir(self.bundle.config_path.parent)
