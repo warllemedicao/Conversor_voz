@@ -1,10 +1,8 @@
 # Projeto Super Voz no Kaggle
 
-Este documento descreve a versao Kaggle do projeto e o comportamento esperado do notebook.
+Este documento descreve a versao Kaggle do projeto e o comportamento esperado.
 
-## Objetivo
-
-A pasta `kaggle` contem somente os arquivos necessarios para rodar a Super Voz no Kaggle:
+## Estrutura da pasta
 
 ```text
 README_kaggle.md
@@ -14,28 +12,34 @@ conversor_voz_kaggle.py
 conversor_voz_requirements_kaggle.txt
 ```
 
-Nao ha notebooks Colab, audios locais ou pesos versionados nessa pasta.
+Nao ha arquivos Colab, audios locais ou pesos versionados nessa pasta.
 
-## Fluxo do notebook
+## Fluxo atual
 
-O notebook `conversor_voz_kaggle.ipynb` deve rodar com `Run All` em um kernel limpo. Ele nao deve reiniciar o kernel intencionalmente.
+O notebook foi simplificado para funcionar com `Run All`:
 
-As celulas fazem:
+1. Prepara GPU/token e instala dependencias.
+2. Cria `/kaggle/working/conversor_voz_kaggle.py`.
+3. Baixa o pacote `warllem/Super_voz`, detecta o modelo, carrega a voz e gera um audio.
+4. Permite gerar outro audio sem recarregar.
+5. Opcionalmente abre Gradio.
 
-1. Conferem GPU e secret do Hugging Face, sem importar `torch`.
-2. Instalam e validam dependencias antes de importar bibliotecas pesadas.
-3. Criam `/kaggle/working/conversor_voz_kaggle.py`.
-4. Baixam o pacote `warllem/Super_voz` do Hugging Face e detectam checkpoint/config/audio.
-5. Validam dependencias e contexto.
-6. Carregam o modelo.
-7. Geram um WAV com player e link de download.
-8. Opcionalmente abrem Gradio.
-
-Se qualquer etapa falhar, a celula para e grava traceback em:
+Se qualquer etapa falhar, o notebook para e salva o traceback em:
 
 ```text
 /kaggle/working/super_voz_kaggle.log
 ```
+
+## Por que o fluxo mudou
+
+As versoes anteriores tentavam reinstalar `numpy`, `scipy` e `pandas` dentro do notebook. No Kaggle, isso e instavel porque o kernel e varias bibliotecas pre-instaladas ja podem ter carregado NumPy em memoria. Trocar essas bibliotecas durante a sessao causou erros como:
+
+```text
+numpy.dtype size changed
+cannot load module more than once per process
+```
+
+Por isso, a versao atual nao troca NumPy/SciPy/Pandas. Ela usa o stack nativo do Kaggle e instala `styletts2==0.1.6` com `--no-deps`, evitando que o pacote rebaixe dependencias antigas.
 
 ## Origem dos arquivos
 
@@ -45,19 +49,19 @@ O modelo vem do Hugging Face:
 https://huggingface.co/warllem/Super_voz
 ```
 
-Repositorio usado:
+Repositorio:
 
 ```text
 warllem/Super_voz
 ```
 
-O download vai para:
+Destino no Kaggle:
 
 ```text
 /kaggle/working/Super_voz
 ```
 
-O download e seletivo:
+Download seletivo:
 
 ```text
 model/**
@@ -69,9 +73,7 @@ data_reference/*.txt
 data_reference/*.csv
 ```
 
-## Arquivos corretos do treinamento
-
-Arquivos esperados no pacote:
+## Arquivos corretos
 
 ```text
 model/config.yml
@@ -94,13 +96,11 @@ epoch=45
 validation_loss=0.268
 ```
 
-O notebook usa primeiro:
+O checkpoint principal usado e:
 
 ```text
 model/best_model.pth
 ```
-
-Se esse arquivo faltar, o codigo tenta ler os logs e escolher o epoch com menor `Validation loss`. Se ainda assim falhar, usa `model/latest_checkpoint.pth`.
 
 ## Audio de referencia
 
@@ -110,32 +110,11 @@ O audio esperado e:
 data_reference/referencia_voz.wav
 ```
 
-O codigo tambem procura nos logs algum `.wav` com metrica de analise. Se encontrar, usa o melhor audio pelo score. Se nao encontrar, usa `data_reference/referencia_voz.wav`.
-
-## Dependencias
-
-Os erros anteriores vieram de instalar ou recarregar NumPy/SciPy depois que o kernel ja tinha importado bibliotecas nativas. A versao atual evita isso:
-
-- a celula 1 nao importa `torch`;
-- a celula 2 instala dependencias antes de qualquer import pesado;
-- a validacao de dependencias ocorre em subprocesso;
-- o notebook nao usa `os._exit(0)` para reiniciar o kernel;
-- o `styletts2==0.1.6` e instalado com `--no-deps`.
-
-Versoes principais:
-
-```text
-numpy==1.26.4
-scipy==1.12.0
-pandas==2.2.2
-styletts2==0.1.6
-```
-
-Avisos de `pip` sobre pacotes do ambiente global do Kaggle, como `google-cloud`, `bigquery`, `dask-cuda`, `jax` e `opencv`, nao significam uso de Google Drive ou Colab. O projeto usa Hugging Face.
+O codigo tambem procura logs com `.wav` e metricas. Se encontrar, pode escolher o melhor audio pelo score. Se nao encontrar, usa `referencia_voz.wav`.
 
 ## Saida
 
-Os audios gerados ficam em:
+Audios gerados:
 
 ```text
 /kaggle/working/audios_gerados
