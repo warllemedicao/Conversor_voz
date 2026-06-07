@@ -1,0 +1,33 @@
+# Super Voz no Kaggle
+
+Use `conversor_voz_kaggle.ipynb` em um notebook Kaggle com GPU ligada.
+
+## Secret do Hugging Face
+
+Crie um secret no Kaggle com um destes nomes:
+
+- `HF_TOKEN`
+- `HUGGINGFACE_TOKEN`
+- `HUGGING_FACE_HUB_TOKEN`
+
+O notebook usa esse token para baixar `warllem/Super_voz` via `huggingface_hub.snapshot_download`.
+
+## Arquivos detectados no Hugging Face
+
+O pacote principal de inferencia fica em:
+
+- `model/config.yml`
+- `model/best_metric.txt`
+- `model/best_model.pth`
+- `model/latest_checkpoint.pth`
+- `model/latest_checkpoint.txt`
+- `model/Utils/ASR/epoch_00080.pth`
+- `model/Utils/JDC/bst.t7`
+- `model/Utils/PLBERT/step_1000000.t7`
+- `data_reference/referencia_voz.wav`
+
+`best_metric.txt` aponta que o melhor treinamento veio de `epoch_2nd_00045.pth`, com `validation_loss=0.268`. No pacote final, esse checkpoint esta salvo como `model/best_model.pth`.
+
+## Selecao automatica
+
+O modulo `conversor_voz_kaggle.py` primeiro le `best_metric.txt`; se ele existir, usa `model/best_model.pth`. Se esse arquivo faltar, ele le os `train.log` e seleciona o epoch com menor `Validation loss`. O audio de referencia tambem e escolhido por logs quando houver uma linha com WAV e metrica; se nao houver, usa `data_reference/referencia_voz.wav`.
