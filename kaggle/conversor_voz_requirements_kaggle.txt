@@ -20,6 +20,7 @@ einops-exts>=0.0.4,<0.0.5
 gruut>=2.3.4,<3.0.0
 gruut-ipa>=0.13.0,<0.14.0
 gruut-lang-en>=2.0.0,<3.0.0
+gruut-lang-pt>=2.0.0,<3.0.0
 tqdm>=4.66.1,<5.0.0
 typing-extensions>=4.9.0,<5.0.0
 styletts2==0.1.6

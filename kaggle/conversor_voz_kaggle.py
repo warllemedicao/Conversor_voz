@@ -586,6 +586,11 @@ class NeuralVoiceSynthesizer:
         if self.bundle.engine == "styletts2":
             kwargs = {"output_wav_file": str(wav_path), "output_sample_rate": 24000}
             parameters = inspect.signature(self.tts.inference).parameters
+            
+            # Forçar idioma português para o fonemizador
+            if "language" in parameters:
+                kwargs["language"] = "pt-br"
+            
             for name in ("target_voice_path", "reference_audio_path", "speaker_wav"):
                 if self.bundle.reference_audio_path and name in parameters:
                     kwargs[name] = str(self.bundle.reference_audio_path)

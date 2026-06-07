@@ -18,7 +18,7 @@ Se alguma etapa falhar, a execucao para e grava o traceback em:
 
 ## Download Otimizado
 
-Diferente de versoes anteriores, o script nao baixa mais todos os checkpoints (~9GB). Ele baixa apenas os metadados e os pesos principais (`best_model.pth`), reduzindo o tempo de download significativamente.
+Diferente de versoes anteriores, o script nao baixa mais todos os checkpoints (~9GB). Ele baixa apenas os metadados e os pesos principais (`best_model.pth`), reduzindo o tempo de download significativamente. O sistema tambem foi ajustado para usar fonetizacao em **Portugues (PT-BR)** por padrao, corrigindo o sotaque de ingles.
 
 ## Decisao importante sobre NumPy/SciPy
 ... (resto do arquivo)
