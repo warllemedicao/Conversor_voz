@@ -40,7 +40,7 @@ cannot load module more than once per process
 AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
 ```
 
-Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`) e as trava no `pip install`, impedindo que atualizações de outras dependencias quebrem o ambiente. Ela usa o stack nativo do Kaggle e instala `styletts2==0.1.6` com `--no-deps`.
+Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`), as salva em um arquivo de `constraints.txt` e instala as outras dependencias sem o parametro `-U` (Upgrade). Isso garante que o ambiente seja preparado rapidamente usando o cache do Kaggle e que as bibliotecas base nunca sejam alteradas. Ela instala `styletts2==0.1.6` com `--no-deps`.
 
 ## Origem dos arquivos
 
