@@ -44,6 +44,25 @@ def patch_styletts2_typing():
         pass
 
 
+def patch_styletts2_language():
+    """Força o sotaque em português (PT-BR) no fonemizador Gruut."""
+    try:
+        from styletts2 import phoneme
+        
+        # O StyleTTS2 0.1.6 chama phonemize(text) sem passar o idioma, 
+        # o que faz com que o Gruut use 'en-us' por padrão.
+        # Aqui alteramos o padrão para 'pt-br'.
+        original_phonemize = phoneme.GruutPhonemizer.phonemize
+        
+        def patched_phonemize(self, text, lang='pt-br'):
+            return original_phonemize(self, text, lang=lang)
+        
+        phoneme.GruutPhonemizer.phonemize = patched_phonemize
+        print("Sotaque StyleTTS2 configurado para Português (PT-BR).")
+    except Exception as e:
+        print(f"Aviso ao configurar idioma: {e}")
+
+
 def fix_styletts2_config_paths(config_path: Path) -> None:
     """Transforma caminhos relativos no config.yml em caminhos absolutos."""
     import yaml
@@ -529,6 +548,7 @@ class NeuralVoiceSynthesizer:
             fix_styletts2_config_paths(self.bundle.config_path)
             report_styletts2_auxiliary_paths(self.bundle.config_path)
             patch_styletts2_typing()
+            patch_styletts2_language()
             original_torch_load = patch_torch_load_for_styletts2()
             previous_cwd = Path.cwd()
             os.chdir(self.bundle.config_path.parent)
@@ -586,10 +606,6 @@ class NeuralVoiceSynthesizer:
         if self.bundle.engine == "styletts2":
             kwargs = {"output_wav_file": str(wav_path), "output_sample_rate": 24000}
             parameters = inspect.signature(self.tts.inference).parameters
-            
-            # Forçar idioma português para o fonemizador
-            if "language" in parameters:
-                kwargs["language"] = "pt-br"
             
             for name in ("target_voice_path", "reference_audio_path", "speaker_wav"):
                 if self.bundle.reference_audio_path and name in parameters:
