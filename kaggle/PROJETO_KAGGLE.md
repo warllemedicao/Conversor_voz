@@ -43,6 +43,18 @@ O destino no Kaggle e:
 /kaggle/working/Super_voz
 ```
 
+O download e seletivo. O repositorio do GitHub nao guarda os audios de referencia nem os pesos do modelo. Durante a execucao no Kaggle, o notebook baixa do Hugging Face apenas os padroes necessarios:
+
+```text
+model/**
+docs/**
+inference/**
+tokenizer/**
+data_reference/referencia_voz.wav
+data_reference/*.txt
+data_reference/*.csv
+```
+
 Para acessar o Hugging Face, o notebook procura um token salvo nos Kaggle Secrets com um destes nomes:
 
 ```text
@@ -334,13 +346,9 @@ conversor_voz_requirements_kaggle.txt
 conversor_voz_colab.py
 conversor_voz_one_click_colab.ipynb
 conversor_voz_requirements_colab.txt
-audio_warllem_ref_texto.wav
-audio_warllem_ref_fonemas.wav
-audio_warllem_ref_fonemas_ptbr.wav
-audio_warllem_voz_neural.wav
 ```
 
-Os arquivos Colab e audios locais foram copiados para a pasta `kaggle` como clone/base do projeto original. Os arquivos realmente usados pelo fluxo Kaggle novo sao:
+Os pesos e audios nao ficam versionados dentro do GitHub. Eles sao baixados pelo notebook dentro do Kaggle, a partir do Hugging Face. Os arquivos realmente usados pelo fluxo Kaggle novo sao:
 
 ```text
 conversor_voz_kaggle.ipynb

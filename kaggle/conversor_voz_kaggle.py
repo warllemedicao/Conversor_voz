@@ -12,12 +12,17 @@ from typing import Iterable
 HF_REPO_ID = "warllem/Super_voz"
 MODEL_ROOT = Path("/kaggle/working/Super_voz")
 OUTPUT_DIR = Path("/kaggle/working/audios_gerados")
+HF_ALLOW_PATTERNS = (
+    "model/**",
+    "docs/**",
+    "inference/**",
+    "tokenizer/**",
+    "data_reference/referencia_voz.wav",
+    "data_reference/*.txt",
+    "data_reference/*.csv",
+)
 REFERENCE_CANDIDATES = (
     "data_reference/referencia_voz.wav",
-    "referencia_voz.wav",
-    "audio_warllem_ref_fonemas_ptbr.wav",
-    "audio_warllem_ref_fonemas.wav",
-    "audio_warllem_ref_texto.wav",
 )
 
 
@@ -55,6 +60,7 @@ def download_hf_repo(
     repo_id: str = HF_REPO_ID,
     output_dir: Path = MODEL_ROOT,
     token: str | None = None,
+    allow_patterns: tuple[str, ...] = HF_ALLOW_PATTERNS,
 ) -> Path:
     from huggingface_hub import snapshot_download
 
@@ -65,6 +71,7 @@ def download_hf_repo(
         repo_type="model",
         local_dir=str(output_dir),
         local_dir_use_symlinks=False,
+        allow_patterns=allow_patterns,
         token=token,
     )
     return output_dir

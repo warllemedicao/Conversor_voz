@@ -10,7 +10,19 @@ Crie um secret no Kaggle com um destes nomes:
 - `HUGGINGFACE_TOKEN`
 - `HUGGING_FACE_HUB_TOKEN`
 
-O notebook usa esse token para baixar `warllem/Super_voz` via `huggingface_hub.snapshot_download`.
+O notebook usa esse token para baixar `warllem/Super_voz` via `huggingface_hub.snapshot_download`. Os audios e pesos nao ficam salvos neste repositorio GitHub; eles sao baixados dentro do Kaggle durante a execucao.
+
+O download seletivo traz os arquivos necessarios para inferencia e analise:
+
+```text
+model/**
+docs/**
+inference/**
+tokenizer/**
+data_reference/referencia_voz.wav
+data_reference/*.txt
+data_reference/*.csv
+```
 
 ## Arquivos detectados no Hugging Face
 
