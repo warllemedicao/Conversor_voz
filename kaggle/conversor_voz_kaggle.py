@@ -63,6 +63,40 @@ def patch_styletts2_language():
         print(f"Aviso ao configurar idioma: {e}")
 
 
+def patch_styletts2_text_cleaner():
+    """Silencia os prints automáticos da classe TextCleaner (evita logs de IPA)."""
+    try:
+        from styletts2 import text_utils
+        import sys
+        import io
+
+        original_init = text_utils.TextCleaner.__init__
+        original_call = text_utils.TextCleaner.__call__
+
+        def patched_init(self, dummy=None):
+            # Silencia o 'print(len(dicts))'
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                original_init(self, dummy)
+            finally:
+                sys.stdout = old_stdout
+
+        def patched_call(self, text):
+            # Silencia o 'print(text)' que ocorre em caracteres desconhecidos
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                return original_call(self, text)
+            finally:
+                sys.stdout = old_stdout
+
+        text_utils.TextCleaner.__init__ = patched_init
+        text_utils.TextCleaner.__call__ = patched_call
+    except Exception as e:
+        print(f"Aviso ao silenciar logs: {e}")
+
+
 def fix_styletts2_config_paths(config_path: Path) -> None:
     """Transforma caminhos relativos no config.yml em caminhos absolutos recursivamente."""
     import yaml
@@ -560,6 +594,7 @@ class NeuralVoiceSynthesizer:
             report_styletts2_auxiliary_paths(self.bundle.config_path)
             patch_styletts2_typing()
             patch_styletts2_language()
+            patch_styletts2_text_cleaner()
             original_torch_load = patch_torch_load_for_styletts2()
             previous_cwd = Path.cwd()
             os.chdir(self.bundle.config_path.parent)
