@@ -22,9 +22,15 @@ O notebook nao reinstala `numpy`, `scipy` nem `pandas`. O Kaggle ja carrega esse
 ```text
 numpy.dtype size changed
 cannot load module more than once per process
+AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
 ```
 
-Por isso, o fluxo atual usa o NumPy/SciPy/Pandas nativos do Kaggle e instala `styletts2==0.1.6` com `--no-deps`, depois de instalar manualmente as dependencias de runtime que nao quebram o stack cientifico.
+O erro `_no_nep50_warning` ocorre especificamente quando o `pip` atualiza o NumPy para a versao 2.0 em disco mas a versao antiga continua em memoria, ou quando ha incompatibilidade entre o NumPy novo e o SciPy antigo.
+
+Por isso, o fluxo atual:
+1. Detecta as versoes exatas de NumPy/SciPy/Pandas ja carregadas pelo Kaggle.
+2. Trava essas versoes no `pip install` (ex: `numpy==1.26.4`), impedindo atualizações acidentais por outras dependencias.
+3. Instala `styletts2==0.1.6` com `--no-deps`.
 
 ## Origem dos arquivos
 

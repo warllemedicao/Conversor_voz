@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
+
+# Patch para compatibilidade com NumPy 2.0+ em pacotes antigos (ex: scipy/nltk)
+if not hasattr(np, "_no_nep50_warning"):
+    setattr(np, "_no_nep50_warning", lambda: (lambda x: x))
+
 
 HF_REPO_ID = "warllem/Super_voz"
 MODEL_ROOT = Path("/kaggle/working/Super_voz")

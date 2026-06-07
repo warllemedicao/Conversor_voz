@@ -37,9 +37,10 @@ As versoes anteriores tentavam reinstalar `numpy`, `scipy` e `pandas` dentro do 
 ```text
 numpy.dtype size changed
 cannot load module more than once per process
+AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
 ```
 
-Por isso, a versao atual nao troca NumPy/SciPy/Pandas. Ela usa o stack nativo do Kaggle e instala `styletts2==0.1.6` com `--no-deps`, evitando que o pacote rebaixe dependencias antigas.
+Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`) e as trava no `pip install`, impedindo que atualizações de outras dependencias quebrem o ambiente. Ela usa o stack nativo do Kaggle e instala `styletts2==0.1.6` com `--no-deps`.
 
 ## Origem dos arquivos
 
