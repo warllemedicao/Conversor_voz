@@ -278,7 +278,21 @@ O `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2` sao reinstalados juntos par
 numpy.dtype size changed
 ```
 
-Se esse erro ja tiver aparecido em uma sessao do Kaggle, reinicie o kernel/runtime e execute as celulas desde o inicio. Trocar NumPy no meio de uma sessao que ja importou bibliotecas cientificas pode deixar modulos compilados carregados em memoria.
+Na primeira instalacao, a celula 5 cria o marcador:
+
+```text
+/kaggle/working/.super_voz_deps_v3_installed
+```
+
+Depois disso, ela encerra o kernel automaticamente com `os._exit(0)`. Isso e intencional. Trocar NumPy/SciPy/Pandas no meio de uma sessao que ja carregou extensoes nativas pode causar erros como:
+
+```text
+cannot load module more than once per process
+```
+
+Quando o Kaggle reconectar, execute novamente desde a celula 1. A celula 5 vai ver o marcador e pular a reinstalacao, apenas validando as versoes instaladas.
+
+Se algum erro de NumPy/SciPy ja tiver aparecido em uma sessao do Kaggle, reinicie o kernel/runtime e execute as celulas desde o inicio.
 
 O pacote `styletts2==0.1.6` e instalado com `--no-deps`. Isso e intencional: as dependencias antigas declaradas pelo pacote podem rebaixar bibliotecas do Kaggle, como `huggingface_hub`, `packaging` e `networkx`, criando conflitos desnecessarios. O notebook instala manualmente as dependencias de runtime necessarias antes de instalar o pacote.
 
