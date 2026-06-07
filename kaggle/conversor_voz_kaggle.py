@@ -64,7 +64,7 @@ def patch_styletts2_language():
 
 
 def fix_styletts2_config_paths(config_path: Path) -> None:
-    """Transforma caminhos relativos no config.yml em caminhos absolutos."""
+    """Transforma caminhos relativos no config.yml em caminhos absolutos recursivamente."""
     import yaml
     if not config_path.exists():
         return
@@ -73,17 +73,28 @@ def fix_styletts2_config_paths(config_path: Path) -> None:
         with config_path.open("r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         
+        base_dir = config_path.parent
         changed = False
-        keys_to_fix = ["ASR_config", "ASR_path", "F0_path", "PLBERT_dir"]
-        model_params = config.get("model_params", {})
-        
-        for key in keys_to_fix:
-            val = model_params.get(key)
-            if val and isinstance(val, str) and not os.path.isabs(val):
-                abs_path = str((config_path.parent / val).resolve())
-                if os.path.exists(abs_path):
-                    model_params[key] = abs_path
-                    changed = True
+
+        def walk_and_fix(data):
+            nonlocal changed
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, (dict, list)):
+                        walk_and_fix(v)
+                    elif isinstance(v, str) and (k.endswith("_path") or k.endswith("_config") or k.endswith("_dir") or v.endswith(".pth") or v.endswith(".t7") or v.endswith(".yml")):
+                        if v and not os.path.isabs(v):
+                            # Tenta resolver relativo ao config.yml
+                            abs_path = (base_dir / v).resolve()
+                            if abs_path.exists():
+                                data[k] = str(abs_path)
+                                changed = True
+            elif isinstance(data, list):
+                for i in range(len(data)):
+                    if isinstance(data[i], (dict, list)):
+                        walk_and_fix(data[i])
+
+        walk_and_fix(config)
         
         if changed:
             with config_path.open("w", encoding="utf-8") as f:
