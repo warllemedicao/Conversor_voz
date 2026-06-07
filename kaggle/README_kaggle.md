@@ -1,18 +1,29 @@
 # Super Voz no Kaggle
 
-Use `conversor_voz_kaggle.ipynb` em um notebook Kaggle com GPU ligada.
+Use `conversor_voz_kaggle.ipynb` em um notebook Kaggle com GPU e internet ligadas.
 
-## Secret do Hugging Face
+## Como rodar
 
-Crie um secret no Kaggle com um destes nomes:
+1. Configure o secret `HF_TOKEN` no Kaggle com seu token do Hugging Face.
+2. Abra `conversor_voz_kaggle.ipynb`.
+3. Clique em `Run All`.
+4. Se tudo estiver correto, o notebook baixa o modelo, carrega a voz e gera um WAV na celula de geracao.
 
-- `HF_TOKEN`
-- `HUGGINGFACE_TOKEN`
-- `HUGGING_FACE_HUB_TOKEN`
+O fluxo atual nao reinicia o kernel de proposito. Se alguma celula falhar, a execucao para e o log completo fica em:
 
-O notebook usa esse token para baixar `warllem/Super_voz` via `huggingface_hub.snapshot_download`. Os audios e pesos nao ficam salvos neste repositorio GitHub; eles sao baixados dentro do Kaggle durante a execucao.
+```text
+/kaggle/working/super_voz_kaggle.log
+```
 
-O download seletivo traz os arquivos necessarios para inferencia e analise:
+## Origem dos arquivos
+
+Os pesos, logs e audio de referencia vem do Hugging Face:
+
+```text
+warllem/Super_voz
+```
+
+O download seletivo traz apenas:
 
 ```text
 model/**
@@ -24,49 +35,81 @@ data_reference/*.txt
 data_reference/*.csv
 ```
 
-## Arquivos detectados no Hugging Face
+Nada disso fica salvo no GitHub; e baixado dentro do Kaggle em:
 
-O pacote principal de inferencia fica em:
+```text
+/kaggle/working/Super_voz
+```
 
-- `model/config.yml`
-- `model/best_metric.txt`
-- `model/best_model.pth`
-- `model/latest_checkpoint.pth`
-- `model/latest_checkpoint.txt`
-- `model/Utils/ASR/epoch_00080.pth`
-- `model/Utils/JDC/bst.t7`
-- `model/Utils/PLBERT/step_1000000.t7`
-- `data_reference/referencia_voz.wav`
+## Arquivos usados
 
-`best_metric.txt` aponta que o melhor treinamento veio de `epoch_2nd_00045.pth`, com `validation_loss=0.268`. No pacote final, esse checkpoint esta salvo como `model/best_model.pth`.
+O pacote esperado contem:
 
-## Selecao automatica
+```text
+model/config.yml
+model/best_metric.txt
+model/best_model.pth
+model/latest_checkpoint.pth
+model/latest_checkpoint.txt
+model/Utils/ASR/epoch_00080.pth
+model/Utils/JDC/bst.t7
+model/Utils/PLBERT/step_1000000.t7
+data_reference/referencia_voz.wav
+docs/train.log
+```
 
-O modulo `conversor_voz_kaggle.py` primeiro le `best_metric.txt`; se ele existir, usa `model/best_model.pth`. Se esse arquivo faltar, ele le os `train.log` e seleciona o epoch com menor `Validation loss`. O audio de referencia tambem e escolhido por logs quando houver uma linha com WAV e metrica; se nao houver, usa `data_reference/referencia_voz.wav`.
+O melhor checkpoint vem de `model/best_metric.txt`:
 
-## Geracao e download do audio
+```text
+source_checkpoint=epoch_2nd_00045.pth
+epoch=45
+validation_loss=0.268
+```
 
-A forma recomendada no Kaggle e usar a celula simples do notebook:
+No pacote final, ele e usado como:
+
+```text
+model/best_model.pth
+```
+
+## Dependencias
+
+O notebook instala as dependencias antes de importar bibliotecas pesadas como `torch`, `numpy`, `scipy` ou `styletts2`. Isso evita o erro de recarregar NumPy/SciPy no mesmo processo.
+
+As versoes principais fixadas sao:
+
+```text
+numpy==1.26.4
+scipy==1.12.0
+pandas==2.2.2
+styletts2==0.1.6
+```
+
+O `styletts2` e instalado com `--no-deps` depois que as dependencias de runtime ja foram instaladas manualmente. Isso evita que o pacote rebaixe bibliotecas do Kaggle e cause conflitos.
+
+Avisos de `pip` citando `google-cloud`, `bigquery`, `dask-cuda`, `jax`, `opencv` ou pacotes semelhantes sao do ambiente global do Kaggle. Este projeto nao usa Google Drive nem Colab.
+
+## Geracao do audio
+
+A celula de geracao usa:
 
 ```python
 texto = 'Digite aqui o texto que voce quer transformar em audio.'
 audio_path = synthesize_for_notebook(synthesizer, texto)
 ```
 
-Essa celula gera o WAV, mostra um player e cria um link `Download do WAV` no proprio output do notebook. Os arquivos ficam em:
+Ela mostra:
+
+- player para ouvir o audio;
+- link `Download do WAV`;
+- caminho do arquivo gerado.
+
+Os WAVs ficam em:
 
 ```text
 /kaggle/working/audios_gerados
 ```
 
-A interface Gradio continua disponivel como opcional, mas enquanto ela estiver rodando a celula fica presa. Para gerar varios audios sem parar o notebook, use a celula `synthesize_for_notebook`.
+## Gradio
 
-Observacao: o pacote `styletts2` deve ser instalado como `styletts2==0.1.6`, porque essa e a versao disponivel no PyPI usado pelo Kaggle.
-
-Na primeira vez que a celula 5 instala `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2`, ela reinicia o kernel automaticamente. Isso e necessario porque NumPy/SciPy sao extensoes nativas e nao podem ser recarregadas com seguranca no mesmo processo Python. Depois que o Kaggle reconectar, clique em `Run All` novamente ou execute desde a celula 1; a celula 5 vai detectar o marcador em `/kaggle/working/.super_voz_deps_v4_installed` e pular a reinstalacao.
-
-A celula 5 e autocontida: se o Kaggle tentar continuar nela depois do reinicio e a variavel `bundle` nao existir, ela importa o modulo, confere o download em `/kaggle/working/Super_voz` e detecta o modelo novamente.
-
-Se aparecer `numpy.dtype size changed`, erro vindo de `scipy`, ou `cannot load module more than once per process`, reinicie o kernel/runtime do Kaggle e execute tudo em ordem.
-
-Mensagens de `pip` citando `google-cloud`, `bigquery`, `dask-cuda`, `jax`, `opencv` ou pacotes parecidos sao avisos do ambiente global do Kaggle, que ja vem com muitas bibliotecas instaladas. Isso nao significa que o projeto esta usando Google Drive ou Colab. O notebook usa Hugging Face para baixar o modelo.
+A interface Gradio e opcional. Ela fica na ultima celula. Enquanto ela estiver rodando, o notebook fica ocupado. Para gerar varios audios sem travar o fluxo, use a celula de geracao direta.
