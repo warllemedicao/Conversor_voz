@@ -11,8 +11,19 @@ from typing import Iterable
 import numpy as np
 
 # Patch para compatibilidade com NumPy 2.0+ em pacotes antigos (ex: scipy/nltk)
-if not hasattr(np, "_no_nep50_warning"):
-    setattr(np, "_no_nep50_warning", lambda: (lambda x: x))
+if not hasattr(np, \"_no_nep50_warning\"):
+    setattr(np, \"_no_nep50_warning\", lambda: (lambda x: x))
+
+# Patch para LangChain 0.2+ (styletts2 busca em langchain.text_splitter)
+try:
+    import langchain.text_splitter
+except ImportError:
+    try:
+        import langchain_text_splitters
+        import sys
+        sys.modules[\"langchain.text_splitter\"] = langchain_text_splitters
+    except ImportError:
+        pass
 
 
 HF_REPO_ID = "warllem/Super_voz"

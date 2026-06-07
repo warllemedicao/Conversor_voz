@@ -4,7 +4,7 @@ Use `conversor_voz_kaggle.ipynb` em um notebook Kaggle com GPU e internet ligada
 
 ## Como rodar
 
-1. Configure o secret `HF_TOKEN` no Kaggle com seu token do Hugging Face.
+1. **Configure o Secret:** No menu superior do Kaggle, vá em **Add-ons** > **Secrets**. Adicione um secret chamado `HF_TOKEN` com o valor do seu token do Hugging Face (disponível em hf.co/settings/tokens). Isso aumenta a velocidade de download e evita avisos de autenticação.
 2. Abra `conversor_voz_kaggle.ipynb`.
 3. Clique em `Run All`.
 4. O notebook deve preparar dependencias, baixar o modelo, carregar a voz e gerar um WAV.
