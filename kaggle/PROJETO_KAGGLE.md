@@ -267,16 +267,22 @@ pydub
 soundfile
 pyyaml
 numpy==1.26.4
+scipy==1.12.0
 pandas==2.2.2
+packaging>=24.2
 ```
 
-O `numpy==1.26.4` e o `pandas==2.2.2` sao reinstalados juntos para reduzir erro binario comum em ambientes com pacotes cientificos, como:
+O `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2` sao reinstalados juntos para reduzir erro binario comum em ambientes com pacotes cientificos, como:
 
 ```text
 numpy.dtype size changed
 ```
 
 Se esse erro ja tiver aparecido em uma sessao do Kaggle, reinicie o kernel/runtime e execute as celulas desde o inicio. Trocar NumPy no meio de uma sessao que ja importou bibliotecas cientificas pode deixar modulos compilados carregados em memoria.
+
+O pacote `styletts2==0.1.6` e instalado com `--no-deps`. Isso e intencional: as dependencias antigas declaradas pelo pacote podem rebaixar bibliotecas do Kaggle, como `huggingface_hub`, `packaging` e `networkx`, criando conflitos desnecessarios. O notebook instala manualmente as dependencias de runtime necessarias antes de instalar o pacote.
+
+Avisos de `pip` citando `google-cloud`, `bigquery`, `dask-cuda`, `jax`, `opencv` ou pacotes semelhantes vem do ambiente global pre-instalado do Kaggle. Eles nao indicam uso de Google Drive ou Colab por este projeto. O fluxo Kaggle baixa os arquivos do Hugging Face.
 
 ### 6. Carregamento da voz
 

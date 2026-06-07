@@ -63,4 +63,6 @@ A interface Gradio continua disponivel como opcional, mas enquanto ela estiver r
 
 Observacao: o pacote `styletts2` deve ser instalado como `styletts2==0.1.6`, porque essa e a versao disponivel no PyPI usado pelo Kaggle.
 
-Se aparecer `numpy.dtype size changed`, reinicie o kernel/runtime do Kaggle e execute tudo em ordem. O notebook reinstala `numpy==1.26.4` junto com `pandas==2.2.2` para manter os binarios compativeis.
+Se aparecer `numpy.dtype size changed` ou erro vindo de `scipy`, reinicie o kernel/runtime do Kaggle e execute tudo em ordem. O notebook reinstala `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2` juntos para manter os binarios compativeis.
+
+Mensagens de `pip` citando `google-cloud`, `bigquery`, `dask-cuda`, `jax`, `opencv` ou pacotes parecidos sao avisos do ambiente global do Kaggle, que ja vem com muitas bibliotecas instaladas. Isso nao significa que o projeto esta usando Google Drive ou Colab. O notebook usa Hugging Face para baixar o modelo.
