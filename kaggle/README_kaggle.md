@@ -63,7 +63,9 @@ A interface Gradio continua disponivel como opcional, mas enquanto ela estiver r
 
 Observacao: o pacote `styletts2` deve ser instalado como `styletts2==0.1.6`, porque essa e a versao disponivel no PyPI usado pelo Kaggle.
 
-Na primeira vez que a celula 5 instala `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2`, ela reinicia o kernel automaticamente. Isso e necessario porque NumPy/SciPy sao extensoes nativas e nao podem ser recarregadas com seguranca no mesmo processo Python. Depois que o Kaggle reconectar, execute novamente desde a celula 1; a celula 5 vai detectar o marcador em `/kaggle/working/.super_voz_deps_v3_installed` e pular a reinstalacao.
+Na primeira vez que a celula 5 instala `numpy==1.26.4`, `scipy==1.12.0` e `pandas==2.2.2`, ela reinicia o kernel automaticamente. Isso e necessario porque NumPy/SciPy sao extensoes nativas e nao podem ser recarregadas com seguranca no mesmo processo Python. Depois que o Kaggle reconectar, clique em `Run All` novamente ou execute desde a celula 1; a celula 5 vai detectar o marcador em `/kaggle/working/.super_voz_deps_v4_installed` e pular a reinstalacao.
+
+A celula 5 e autocontida: se o Kaggle tentar continuar nela depois do reinicio e a variavel `bundle` nao existir, ela importa o modulo, confere o download em `/kaggle/working/Super_voz` e detecta o modelo novamente.
 
 Se aparecer `numpy.dtype size changed`, erro vindo de `scipy`, ou `cannot load module more than once per process`, reinicie o kernel/runtime do Kaggle e execute tudo em ordem.
 

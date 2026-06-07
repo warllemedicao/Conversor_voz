@@ -281,7 +281,7 @@ numpy.dtype size changed
 Na primeira instalacao, a celula 5 cria o marcador:
 
 ```text
-/kaggle/working/.super_voz_deps_v3_installed
+/kaggle/working/.super_voz_deps_v4_installed
 ```
 
 Depois disso, ela encerra o kernel automaticamente com `os._exit(0)`. Isso e intencional. Trocar NumPy/SciPy/Pandas no meio de uma sessao que ja carregou extensoes nativas pode causar erros como:
@@ -290,7 +290,13 @@ Depois disso, ela encerra o kernel automaticamente com `os._exit(0)`. Isso e int
 cannot load module more than once per process
 ```
 
-Quando o Kaggle reconectar, execute novamente desde a celula 1. A celula 5 vai ver o marcador e pular a reinstalacao, apenas validando as versoes instaladas.
+Quando o Kaggle reconectar, execute `Run All` novamente ou rode desde a celula 1. A celula 5 vai ver o marcador e pular a reinstalacao, apenas validando as versoes instaladas.
+
+A celula 5 tambem foi feita para ser autocontida. Se o Kaggle tentar continuar diretamente nela depois do reinicio, e a variavel `bundle` nao existir, a propria celula importa `conversor_voz_kaggle`, confere se `/kaggle/working/Super_voz` ja existe, baixa se necessario e detecta novamente o modelo. Isso evita o erro:
+
+```text
+NameError: name 'bundle' is not defined
+```
 
 Se algum erro de NumPy/SciPy ja tiver aparecido em uma sessao do Kaggle, reinicie o kernel/runtime e execute as celulas desde o inicio.
 
