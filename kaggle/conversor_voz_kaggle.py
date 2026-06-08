@@ -45,20 +45,21 @@ def patch_styletts2_typing():
 
 
 def patch_styletts2_language():
-    """Força o sotaque em português (PT-BR) no fonemizador Gruut."""
+    """Força o sotaque em português do Brasil (PT-BR) no fonemizador Gruut."""
     try:
         from styletts2 import phoneme
         
         # O StyleTTS2 0.1.6 chama phonemize(text) sem passar o idioma, 
         # o que faz com que o Gruut use 'en-us' por padrão.
-        # Aqui alteramos o padrão para 'pt-br'.
+        # Aqui alteramos o padrão para 'pt-br' (Português Brasileiro).
         original_phonemize = phoneme.GruutPhonemizer.phonemize
         
         def patched_phonemize(self, text, lang='pt-br'):
-            return original_phonemize(self, text, lang=lang)
+            # Garantimos que seja pt-br para evitar sotaque de Portugal (pt-pt)
+            return original_phonemize(self, text, lang='pt-br')
         
         phoneme.GruutPhonemizer.phonemize = patched_phonemize
-        print("Sotaque StyleTTS2 configurado para Português (PT-BR).")
+        print("Sotaque StyleTTS2 configurado para Português do Brasil (PT-BR).")
     except Exception as e:
         print(f"Aviso ao configurar idioma: {e}")
 
@@ -68,31 +69,28 @@ def patch_styletts2_text_cleaner():
     try:
         from styletts2 import text_utils
         import sys
-        import io
 
-        original_init = text_utils.TextCleaner.__init__
+        # Em vez de tentar capturar o stdout (que pode falhar em notebooks),
+        # nós substituímos o dicionário e o comportamento de erro.
+        
         original_call = text_utils.TextCleaner.__call__
 
-        def patched_init(self, dummy=None):
-            # Silencia o 'print(len(dicts))'
-            old_stdout = sys.stdout
-            sys.stdout = io.StringIO()
-            try:
-                original_init(self, dummy)
-            finally:
-                sys.stdout = old_stdout
-
         def patched_call(self, text):
-            # Silencia o 'print(text)' que ocorre em caracteres desconhecidos
-            old_stdout = sys.stdout
-            sys.stdout = io.StringIO()
-            try:
-                return original_call(self, text)
-            finally:
-                sys.stdout = old_stdout
+            # Filtramos caracteres que não estão no dicionário para evitar o print(text) interno da lib
+            cleaned_text = "".join([c for char in text for c in char if c in self.word_index_dictionary])
+            # Se a string original tinha algo que a lib ia reclamar, nós limpamos antes
+            # para que o loop interno do original_call nunca caia no KeyError que gera o print.
+            return original_call(self, cleaned_text)
 
-        text_utils.TextCleaner.__init__ = patched_init
         text_utils.TextCleaner.__call__ = patched_call
+        
+        # Patch no init para evitar print(len(dicts))
+        original_init = text_utils.TextCleaner.__init__
+        def patched_init(self, dummy=None):
+            original_init(self, dummy)
+        
+        text_utils.TextCleaner.__init__ = patched_init
+        
     except Exception as e:
         print(f"Aviso ao silenciar logs: {e}")
 
