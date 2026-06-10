@@ -24,5 +24,6 @@ gruut-lang-pt>=2.0.0,<3.0.0
 tqdm>=4.66.1,<5.0.0
 typing-extensions>=4.9.0,<5.0.0
 styletts2==0.1.6
+f5-tts>=1.1.9
 coqui-tts>=0.27.0
 piper-tts>=1.2.0
