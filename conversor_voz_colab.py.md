@@ -2,6 +2,12 @@
 
 Modulo principal do programa.
 
+## Historico
+
+### 2026-06-10
+
+O runtime Kaggle foi separado do runtime Colab e refeito para F5-TTS em `kaggle/conversor_voz_kaggle.py`. Este arquivo continua descrevendo o modulo Colab antigo.
+
 Ele faz cinco tarefas:
 
 1. Importa os arquivos do modelo para `/content/voz_neural`.

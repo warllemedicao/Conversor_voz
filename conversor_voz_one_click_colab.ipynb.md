@@ -2,6 +2,12 @@
 
 Notebook one-click para Google Colab.
 
+## Historico
+
+### 2026-06-10
+
+O fluxo Kaggle passou a ser mantido separadamente em `kaggle/conversor_voz_kaggle.ipynb`, usando exclusivamente F5-TTS e o repositorio Hugging Face `warllem/Super_voz`. Este arquivo continua documentando o notebook Colab antigo.
+
 Este e o unico notebook usado pelo projeto. Ao executar as celulas em ordem, ele:
 
 1. Faz login e monta o Google Drive em `/content/drive`.

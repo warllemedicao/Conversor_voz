@@ -2,6 +2,12 @@
 
 Lista as bibliotecas Python usadas pelo notebook no Google Colab.
 
+## Historico
+
+### 2026-06-10
+
+As dependencias Kaggle passaram a ser mantidas em `kaggle/conversor_voz_requirements_kaggle.txt`, com foco exclusivo em F5-TTS. Esta lista continua documentando o fluxo Colab antigo.
+
 No notebook atual, as dependencias sao instaladas depois que os arquivos do modelo ja foram importados para `/content/voz_neural`.
 
 - `gdown`: baixa a pasta publica do Google Drive.

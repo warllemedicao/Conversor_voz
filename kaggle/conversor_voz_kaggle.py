@@ -1,186 +1,157 @@
 from __future__ import annotations
 
-import inspect
 import json
+import logging
+import math
 import os
 import re
-import subprocess
-from dataclasses import dataclass
+import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
-
-import numpy as np
-
-# Patch para compatibilidade com NumPy 2.0+ em pacotes antigos (ex: scipy/nltk)
-if not hasattr(np, "_no_nep50_warning"):
-    setattr(np, "_no_nep50_warning", lambda: (lambda x: x))
-
-# Patch para LangChain 0.2+ (styletts2 busca em langchain.text_splitter)
-try:
-    import langchain.text_splitter
-except ImportError:
-    try:
-        import langchain_text_splitters
-        import sys
-        sys.modules["langchain.text_splitter"] = langchain_text_splitters
-    except ImportError:
-        pass
-
-
-def patch_styletts2_typing():
-    """Corrige TypeError: unsupported operand type(s) for /: 'str' and 'str' no PLBERT."""
-    try:
-        import styletts2.Utils.PLBERT.util
-        from pathlib import Path
-
-        original_load_plbert = styletts2.Utils.PLBERT.util.load_plbert
-
-        def patched_load_plbert(log_dir, *args, **kwargs):
-            if log_dir is not None and isinstance(log_dir, (str, bytes)):
-                log_dir = Path(log_dir)
-            return original_load_plbert(log_dir, *args, **kwargs)
-
-        styletts2.Utils.PLBERT.util.load_plbert = patched_load_plbert
-    except Exception:
-        pass
-
-
-def patch_styletts2_language():
-    """Força o sotaque em português do Brasil (PT-BR) no fonemizador Gruut."""
-    try:
-        from styletts2 import phoneme
-        
-        # O StyleTTS2 0.1.6 chama phonemize(text) sem passar o idioma, 
-        # o que faz com que o Gruut use 'en-us' por padrão.
-        # Aqui alteramos o padrão para 'pt-br' (Português Brasileiro).
-        original_phonemize = phoneme.GruutPhonemizer.phonemize
-        
-        def patched_phonemize(self, text, lang='pt-br'):
-            # Garantimos que seja pt-br para evitar sotaque de Portugal (pt-pt)
-            return original_phonemize(self, text, lang='pt-br')
-        
-        phoneme.GruutPhonemizer.phonemize = patched_phonemize
-        print("Sotaque StyleTTS2 configurado para Português do Brasil (PT-BR).")
-    except Exception as e:
-        print(f"Aviso ao configurar idioma: {e}")
-
-
-def patch_styletts2_text_cleaner():
-    """Silencia os prints automáticos da classe TextCleaner (evita logs de IPA)."""
-    try:
-        from styletts2 import text_utils
-        import sys
-
-        # Em vez de tentar capturar o stdout (que pode falhar em notebooks),
-        # nós substituímos o dicionário e o comportamento de erro.
-        
-        original_call = text_utils.TextCleaner.__call__
-
-        def patched_call(self, text):
-            # Filtramos caracteres que não estão no dicionário para evitar o print(text) interno da lib
-            cleaned_text = "".join([c for char in text for c in char if c in self.word_index_dictionary])
-            # Se a string original tinha algo que a lib ia reclamar, nós limpamos antes
-            # para que o loop interno do original_call nunca caia no KeyError que gera o print.
-            return original_call(self, cleaned_text)
-
-        text_utils.TextCleaner.__call__ = patched_call
-        
-        # Patch no init para evitar print(len(dicts))
-        original_init = text_utils.TextCleaner.__init__
-        def patched_init(self, dummy=None):
-            original_init(self, dummy)
-        
-        text_utils.TextCleaner.__init__ = patched_init
-        
-    except Exception as e:
-        print(f"Aviso ao silenciar logs: {e}")
-
-
-def fix_styletts2_config_paths(config_path: Path) -> None:
-    """Transforma caminhos relativos no config.yml em caminhos absolutos recursivamente."""
-    import yaml
-    if not config_path.exists():
-        return
-    
-    try:
-        with config_path.open("r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        
-        base_dir = config_path.parent
-        changed = False
-
-        def walk_and_fix(data):
-            nonlocal changed
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    if isinstance(v, (dict, list)):
-                        walk_and_fix(v)
-                    elif isinstance(v, str) and (k.endswith("_path") or k.endswith("_config") or k.endswith("_dir") or v.endswith(".pth") or v.endswith(".t7") or v.endswith(".yml")):
-                        if v and not os.path.isabs(v):
-                            # Tenta resolver relativo ao config.yml
-                            abs_path = (base_dir / v).resolve()
-                            if abs_path.exists():
-                                data[k] = str(abs_path)
-                                changed = True
-            elif isinstance(data, list):
-                for i in range(len(data)):
-                    if isinstance(data[i], (dict, list)):
-                        walk_and_fix(data[i])
-
-        walk_and_fix(config)
-        
-        if changed:
-            with config_path.open("w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False)
-            print(f"Caminhos no {config_path.name} atualizados para absolutos.")
-    except Exception as e:
-        print(f"Aviso ao corrigir caminhos do config: {e}")
+from typing import Any
 
 
 HF_REPO_ID = "warllem/Super_voz"
-MODEL_ROOT = Path("/kaggle/working/Super_voz")
-OUTPUT_DIR = Path("/kaggle/working/audios_gerados")
-HF_METADATA_PATTERNS = (
-    "libraries/**/README.md",
-    "libraries/**/*.json",
-    "libraries/**/*.txt",
-    "voices/**/README.md",
-    "voices/**/manifest.json",
-    "voices/**/docs/*.json",
-    "voices/**/data_reference/*.txt",
-    "voices/**/data_reference/*.csv",
-    "voices/**/model/*.txt",
-    "model/*.yml",
-    "model/*.yaml",
-    "model/*.json",
-    "model/*.txt",
-    "model/Utils/**",
-    "docs/**",
-    "inference/**",
-    "tokenizer/**",
-    "data_reference/referencia_voz.wav",
-    "data_reference/*.txt",
-    "data_reference/*.csv",
-)
-REFERENCE_CANDIDATES = (
-    "data_reference/referencia_voz.wav",
-)
+HF_REVISION = "main"
+PREFERRED_VOICE_PACKAGE = "v_minha_voz_f5_tts_ptbr"
+MODEL_ROOT = Path(os.environ.get("SUPER_VOZ_MODEL_ROOT", "/kaggle/working/Super_voz"))
+OUTPUT_DIR = Path(os.environ.get("SUPER_VOZ_OUTPUT_DIR", "/kaggle/working"))
+LOG_PATH = Path(os.environ.get("SUPER_VOZ_LOG_PATH", "/kaggle/working/super_voz_kaggle.log"))
+TEST_TEXT = "Boa noite Warllem, sua voz esta pronta."
+
+DEFAULT_F5TTS_V1_BASE_CONFIG: dict[str, Any] = {
+    "backbone": "DiT",
+    "arch": {
+        "dim": 1024,
+        "depth": 22,
+        "heads": 16,
+        "ff_mult": 2,
+        "text_dim": 512,
+        "text_mask_padding": True,
+        "qk_norm": None,
+        "conv_layers": 4,
+        "pe_attn_head": None,
+        "attn_backend": "torch",
+        "attn_mask_enabled": False,
+        "checkpoint_activations": False,
+    },
+    "mel_spec": {
+        "target_sample_rate": 24000,
+        "n_mel_channels": 100,
+        "hop_length": 256,
+        "win_length": 1024,
+        "n_fft": 1024,
+        "mel_spec_type": "vocos",
+    },
+    "tokenizer": "char",
+    "vocoder": "vocos",
+}
+
+PORTUGUESE_REQUIRED_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZáàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ .,!?;:-'\"")
 
 
 @dataclass(frozen=True)
-class ModelBundle:
-    engine: str
-    model_path: Path
-    config_path: Path | None = None
-    reference_audio_path: Path | None = None
-    reference_text: str | None = None
-    vocab_path: Path | None = None
-    model_name: str | None = None
-    model_cfg: dict | None = None
+class RemoteFile:
+    path: str
+    size: int | None = None
+    lfs_size: int | None = None
+    oid: str | None = None
+    lfs_oid: str | None = None
+
+    @property
+    def expected_size(self) -> int | None:
+        return self.lfs_size or self.size
 
 
-def run_command(command: list[str], input_text: str | None = None) -> None:
-    subprocess.run(command, input=input_text, text=True, check=True)
+@dataclass
+class CheckpointChoice:
+    remote_path: str
+    reason: str
+    expected_size: int | None = None
+
+
+@dataclass
+class VoicePackage:
+    repo_id: str
+    revision: str
+    root: Path
+    voice_dir: str
+    manifest_path: Path
+    manifest: dict[str, Any]
+    checkpoint: CheckpointChoice
+    vocab_remote_path: str
+    base_vocab_remote_path: str | None
+    reference_audio_remote_path: str
+    reference_text_remote_path: str | None
+    base_library_dir: str | None
+    setting_remote_path: str | None
+    config: dict[str, Any]
+    remote_files: dict[str, RemoteFile]
+    local_checkpoint_path: Path | None = None
+    local_vocab_path: Path | None = None
+    local_base_vocab_path: Path | None = None
+    local_reference_audio_path: Path | None = None
+    local_reference_text_path: Path | None = None
+    local_setting_path: Path | None = None
+
+
+@dataclass
+class DiagnosticReport:
+    rows: list[tuple[str, str, str]] = field(default_factory=list)
+
+    def add(self, item: str, ok: bool, detail: str = "") -> None:
+        self.rows.append((item, "OK" if ok else "FALHA", detail))
+
+    @property
+    def ready(self) -> bool:
+        blocking = {
+            "Manifesto",
+            "Checkpoint principal",
+            "Checkpoint legivel",
+            "Arquitetura identificada",
+            "Vocab encontrado",
+            "Vocab compativel",
+            "Referencia de audio",
+            "Vocoder",
+        }
+        return all(status == "OK" for item, status, _ in self.rows if item in blocking)
+
+    def render(self) -> str:
+        lines = [f"{'Item':<32} {'Status':<8} Detalhe"]
+        for item, status, detail in self.rows:
+            lines.append(f"{item:<32} {status:<8} {detail}")
+        lines.append(f"{'Inferencia pronta':<32} {'SIM' if self.ready else 'NAO':<8}")
+        return "\n".join(lines)
+
+
+def setup_logging(log_path: Path = LOG_PATH) -> logging.Logger:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("super_voz_kaggle")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter("%(message)s"))
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    return logger
+
+
+LOGGER = setup_logging()
+
+
+def log_exception_context(exc: BaseException, repo_id: str, revision: str, token: str | None) -> None:
+    LOGGER.error("Falha Hugging Face sem fallback silencioso.")
+    LOGGER.error("Tipo da excecao: %s", type(exc).__name__)
+    LOGGER.error("Mensagem: %s", exc)
+    LOGGER.error("Repo ID: %s", repo_id)
+    LOGGER.error("Revisao: %s", revision)
+    LOGGER.error("Token presente: %s", "sim" if token else "nao")
+    LOGGER.error("Traceback completo:\n%s", "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
 
 
 def get_kaggle_secret(name: str) -> str | None:
@@ -201,774 +172,735 @@ def get_hf_token() -> str | None:
     return None
 
 
-def load_json_file(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8", errors="ignore"))
-    except Exception:
-        return {}
-
-
-def remote_exists(remote_files: list[str], path: str | None) -> bool:
-    return bool(path and path in remote_files)
-
-
-def resolve_manifest_path(root: Path, manifest_path: Path, value: str | None) -> Path | None:
-    if not value:
-        return None
-    return (manifest_path.parent / value).resolve()
-
-
-def f5_manifest_score(manifest_path: Path, manifest: dict, remote_files: list[str]) -> tuple[int, str]:
-    remote_dir = manifest.get("huggingface_remote_dir") or manifest_path.parent.as_posix()
-    score = 0
-    if manifest.get("architecture") == "F5-TTS":
-        score += 100
-    if manifest.get("package_name") == "v_minha_voz_f5_tts_ptbr":
-        score += 30
-    if remote_dir.startswith("voices/v_"):
-        score += 20
-    if remote_exists(remote_files, f"{remote_dir}/{manifest.get('voice_checkpoint', '')}"):
-        score += 10
-    if not any(path.startswith(f"{remote_dir}/") and path.endswith(".tmp") for path in remote_files):
-        score += 5
-    return score, remote_dir
-
-
-def select_f5_manifest(root: Path, remote_files: list[str]) -> tuple[Path, dict] | None:
-    manifests: list[tuple[tuple[int, str], Path, dict]] = []
-    for manifest_path in sorted(root.glob("voices/*/manifest.json")):
-        manifest = load_json_file(manifest_path)
-        if manifest.get("architecture") != "F5-TTS":
-            continue
-        manifests.append((f5_manifest_score(manifest_path, manifest, remote_files), manifest_path, manifest))
-
-    if not manifests:
-        return None
-
-    _, manifest_path, manifest = sorted(manifests, reverse=True)[0]
-    print("Pacote F5-TTS selecionado:", manifest.get("package_name") or manifest_path.parent.name)
-    return manifest_path, manifest
-
-
-def select_f5_download_patterns(root: Path, remote_files: list[str]) -> list[str]:
-    selected = select_f5_manifest(root, remote_files)
-    if not selected:
-        return []
-
-    manifest_path, manifest = selected
-    voice_remote_dir = manifest.get("huggingface_remote_dir") or manifest_path.parent.relative_to(root).as_posix()
-    patterns: list[str] = [
-        f"{voice_remote_dir}/README.md",
-        f"{voice_remote_dir}/manifest.json",
-        f"{voice_remote_dir}/docs/**",
-        f"{voice_remote_dir}/data_reference/referencia_voz.wav",
-        f"{voice_remote_dir}/data_reference/*.txt",
-        f"{voice_remote_dir}/model/vocab.txt",
-    ]
-
-    for key in ("voice_checkpoint", "latest_checkpoint"):
-        remote_path = f"{voice_remote_dir}/{manifest.get(key, '')}"
-        if remote_exists(remote_files, remote_path):
-            patterns.append(remote_path)
+def file_size_text(size: int | None) -> str:
+    if size is None:
+        return "desconhecido"
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size)
+    unit = units[0]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
             break
-
-    base_library = manifest.get("base_library") or {}
-    base_remote_dir = base_library.get("huggingface_remote_dir")
-    if base_remote_dir:
-        patterns.extend(
-            [
-                f"{base_remote_dir}/README.md",
-                f"{base_remote_dir}/setting.json",
-                f"{base_remote_dir}/vocab.txt",
-                f"{base_remote_dir}/audio_ref/*.txt",
-                f"{base_remote_dir}/audio_ref/*.wav",
-            ]
-        )
-        base_checkpoint = base_library.get("checkpoint")
-        if remote_exists(remote_files, f"{base_remote_dir}/{base_checkpoint}"):
-            patterns.append(f"{base_remote_dir}/{base_checkpoint}")
-
-    return sorted(set(patterns))
+        value /= 1024
+    return f"{value:.2f} {unit}"
 
 
-def download_hf_repo(
+def list_remote_files(
     repo_id: str = HF_REPO_ID,
-    output_dir: Path = MODEL_ROOT,
+    revision: str = HF_REVISION,
     token: str | None = None,
+) -> dict[str, RemoteFile]:
+    from huggingface_hub import HfApi
+
+    token = token or get_hf_token()
+    api = HfApi(token=token)
+    try:
+        tree = list(api.list_repo_tree(repo_id=repo_id, repo_type="model", revision=revision, recursive=True, expand=True))
+    except Exception as exc:
+        log_exception_context(exc, repo_id, revision, token)
+        raise
+
+    remote_files: dict[str, RemoteFile] = {}
+    for item in tree:
+        path = getattr(item, "path", None)
+        if not path or item.__class__.__name__ == "RepoFolder":
+            continue
+        lfs = getattr(item, "lfs", None) or {}
+        lfs_size = lfs.get("size") if isinstance(lfs, dict) else getattr(lfs, "size", None)
+        lfs_oid = lfs.get("oid") if isinstance(lfs, dict) else (getattr(lfs, "oid", None) or getattr(lfs, "sha256", None))
+        remote_files[path] = RemoteFile(
+            path=path,
+            size=getattr(item, "size", None),
+            lfs_size=lfs_size,
+            oid=getattr(item, "oid", None) or getattr(item, "blob_id", None),
+            lfs_oid=lfs_oid,
+        )
+
+    LOGGER.info("Arquivos encontrados no Hugging Face (%s @ %s):", repo_id, revision)
+    for file in sorted(remote_files.values(), key=lambda item: item.path):
+        LOGGER.info("- %s (%s)", file.path, file_size_text(file.expected_size))
+    return remote_files
+
+
+def download_remote_file(
+    remote_path: str,
+    output_dir: Path,
+    repo_id: str = HF_REPO_ID,
+    revision: str = HF_REVISION,
+    token: str | None = None,
+    expected_size: int | None = None,
 ) -> Path:
-    from huggingface_hub import snapshot_download, HfApi
+    from huggingface_hub import hf_hub_download
 
     token = token or get_hf_token()
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    api = HfApi(token=token)
+    LOGGER.info("Baixando %s", remote_path)
     try:
-        remote_files = api.list_repo_files(repo_id=repo_id)
-    except Exception as e:
-        print(f"Aviso ao listar arquivos remotos: {e}. Usando fallback StyleTTS2.")
-        remote_files = ["model/best_model.pth"]
-
-    # 1. Baixar metadados e arquivos auxiliares (pequenos)
-    print("Baixando metadados e arquivos auxiliares...")
-    snapshot_download(
-        repo_id=repo_id,
-        repo_type="model",
-        local_dir=str(output_dir),
-        local_dir_use_symlinks=False,
-        allow_patterns=HF_METADATA_PATTERNS,
-        token=token,
-    )
-
-    f5_patterns = select_f5_download_patterns(output_dir, remote_files)
-    if f5_patterns:
-        print("Formato F5-TTS detectado. Baixando artefatos necessarios:")
-        for pattern in f5_patterns:
-            print(f"- {pattern}")
-        snapshot_download(
-            repo_id=repo_id,
-            repo_type="model",
-            local_dir=str(output_dir),
-            local_dir_use_symlinks=False,
-            allow_patterns=f5_patterns,
-            token=token,
+        local_path = Path(
+            hf_hub_download(
+                repo_id=repo_id,
+                repo_type="model",
+                revision=revision,
+                filename=remote_path,
+                local_dir=str(output_dir),
+                token=token,
+            )
         )
-        return output_dir
-    
-    # 2. Identificar qual o melhor checkpoint sem baixar todos
-    print("Identificando checkpoint ideal...")
-    pth_files = [f for f in remote_files if f.startswith("model/") and f.endswith(".pth") and "Utils" not in f]
-    
-    # Lógica de seleção (similar ao select_checkpoint_path mas para nomes remotos)
-    selected_pth = "model/best_model.pth"
-    
-    best_metric = parse_key_value_file(output_dir / "model" / "best_metric.txt")
-    if best_metric:
-        source = best_metric.get("source_checkpoint")
-        if source and f"model/{source}" in pth_files:
-            selected_pth = f"model/{source}"
-    
-    if selected_pth not in pth_files and "model/latest_checkpoint.pth" in pth_files:
-        selected_pth = "model/latest_checkpoint.pth"
-    elif selected_pth not in pth_files and pth_files:
-        selected_pth = sorted(pth_files)[-1] # Pega o último/mais recente se nada for achado
-
-    # 3. Baixar apenas o arquivo selecionado
-    if not (output_dir / selected_pth).exists():
-        print(f"Baixando checkpoint selecionado: {selected_pth}")
-        snapshot_download(
-            repo_id=repo_id,
-            repo_type="model",
-            local_dir=str(output_dir),
-            local_dir_use_symlinks=False,
-            allow_patterns=[selected_pth],
-            token=token,
+    except TypeError:
+        local_path = Path(
+            hf_hub_download(
+                repo_id=repo_id,
+                repo_type="model",
+                revision=revision,
+                filename=remote_path,
+                local_dir=str(output_dir),
+                token=token,
+            )
         )
-    else:
-        print(f"Checkpoint {selected_pth} já existe localmente.")
+    except Exception as exc:
+        log_exception_context(exc, repo_id, revision, token)
+        raise
 
-    return output_dir
-
-
-def iter_files(root: Path) -> Iterable[Path]:
-    if not root.exists():
-        return []
-    return sorted(path for path in root.rglob("*") if path.is_file())
+    validate_downloaded_file(local_path, expected_size)
+    return local_path
 
 
-def print_file_report(root: Path) -> None:
-    files = list(iter_files(root))
-    if not files:
-        print("Nenhum arquivo encontrado.")
-        return
-
-    print("Arquivos encontrados:")
-    for path in files:
-        size_mb = path.stat().st_size / 1024 / 1024
-        print(f"- {path} ({size_mb:.1f} MB)")
-
-
-def parse_key_value_file(path: Path) -> dict[str, str]:
-    data: dict[str, str] = {}
-    if not path.exists():
-        return data
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = value.strip()
-    return data
+def validate_downloaded_file(path: Path, expected_size: int | None = None) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"Arquivo baixado nao encontrado: {path}")
+    size = path.stat().st_size
+    if size <= 0:
+        raise RuntimeError(f"Arquivo vazio: {path}")
+    if expected_size is not None and size != expected_size:
+        raise RuntimeError(f"Tamanho invalido em {path}: baixado={size}, esperado={expected_size}")
+    LOGGER.info("Arquivo local: %s (%s)", path, file_size_text(size))
 
 
-def parse_validation_losses_from_log(log_path: Path) -> list[tuple[int, float]]:
-    if not log_path.exists():
-        return []
-
-    results: list[tuple[int, float]] = []
-    current_epoch = -1
-    epoch_pattern = re.compile(r"Epoch\s+\[(\d+)/\d+\]")
-    val_pattern = re.compile(r"Validation loss:\s*([0-9.]+)", re.IGNORECASE)
-
-    for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        epoch_match = epoch_pattern.search(line)
-        if epoch_match:
-            current_epoch = int(epoch_match.group(1))
-        val_match = val_pattern.search(line)
-        if val_match and current_epoch >= 0:
-            results.append((current_epoch, float(val_match.group(1))))
-    return results
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def find_training_logs(root: Path) -> list[Path]:
-    patterns = ("*.log", "*log*.txt", "events.out.tfevents.*")
-    logs: list[Path] = []
-    for pattern in patterns:
-        logs.extend(root.rglob(pattern))
-    return sorted(set(path for path in logs if path.is_file()))
-
-
-def best_epoch_from_logs(root: Path) -> tuple[int, float] | None:
-    best: tuple[int, float] | None = None
-    preferred_logs = [path for path in (root / "docs" / "train.log", root / "model" / "train.log") if path.exists()]
-    logs = preferred_logs or find_training_logs(root)
-    for log_path in logs:
-        if log_path.name.startswith("events.out.tfevents"):
-            continue
-        for epoch, loss in parse_validation_losses_from_log(log_path):
-            if best is None or loss < best[1]:
-                best = (epoch, loss)
-    return best
-
-
-def checkpoint_epoch(path: Path) -> int:
-    patterns = (
-        r"epoch_2nd_(\d+).*\.pth$",
-        r"epoch_(\d+).*\.pth$",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, path.name)
-        if match:
-            return int(match.group(1))
-    return -1
-
-
-def select_checkpoint_path(root: Path) -> Path | None:
-    pth_files = sorted(root.rglob("*.pth"))
-    if not pth_files:
+def resolve_manifest_remote_path(manifest: dict[str, Any], manifest_path: str, value: str | None) -> str | None:
+    if not value:
         return None
-
-    best_metric = parse_key_value_file(root / "model" / "best_metric.txt")
-    if best_metric:
-        source_checkpoint = best_metric.get("source_checkpoint")
-        candidates = [root / "model" / "best_model.pth"]
-        if source_checkpoint:
-            candidates.append(root / "model" / source_checkpoint)
-        for candidate in candidates:
-            if candidate.is_file():
-                print("Melhor checkpoint pelo best_metric.txt:", candidate)
-                print("Metricas:", best_metric)
-                return candidate
-
-    best_from_log = best_epoch_from_logs(root)
-    if best_from_log:
-        best_epoch, best_loss = best_from_log
-        epoch_matches = [path for path in pth_files if checkpoint_epoch(path) == best_epoch]
-        if epoch_matches:
-            selected = sorted(epoch_matches)[0]
-            print(f"Melhor checkpoint pelo train.log: {selected} (validation_loss={best_loss:.3f})")
-            return selected
-
-    latest_name_path = root / "model" / "latest_checkpoint.txt"
-    if latest_name_path.exists():
-        latest_name = latest_name_path.read_text(encoding="utf-8", errors="ignore").strip()
-        for candidate in (root / "model" / "latest_checkpoint.pth", root / "model" / latest_name):
-            if candidate.is_file():
-                print("Checkpoint latest selecionado:", candidate)
-                return candidate
-
-    preferred_names = ("best_model.pth", "latest_checkpoint.pth")
-    for name in preferred_names:
-        matches = [path for path in pth_files if path.name == name]
-        if matches:
-            return sorted(matches)[0]
-
-    epoch_files = [path for path in pth_files if checkpoint_epoch(path) >= 0]
-    if epoch_files:
-        return sorted(epoch_files, key=lambda path: (checkpoint_epoch(path), str(path)), reverse=True)[0]
-
-    return pth_files[0]
-
-
-def nearest_config_for_checkpoint(checkpoint: Path, root: Path, patterns: tuple[str, ...]) -> Path | None:
-    candidates: list[Path] = []
-    for pattern in patterns:
-        candidates.extend(root.rglob(pattern))
-    candidates = sorted(set(candidates))
-    if not candidates:
-        return None
-
-    same_folder = [path for path in candidates if path.parent == checkpoint.parent]
-    if same_folder:
-        return same_folder[0]
-
-    parent_folder = [path for path in candidates if checkpoint.parent.is_relative_to(path.parent)]
-    if parent_folder:
-        return sorted(parent_folder, key=lambda path: len(path.parts), reverse=True)[0]
-
-    model_config = root / "model" / "config.yml"
-    if model_config.exists() and model_config in candidates:
-        return model_config
-    return candidates[0]
-
-
-def score_audio_reference_line(line: str) -> float | None:
-    metric_patterns = (
-        r"(?:score|similarity|mos|qualidade|quality)\s*[:=]\s*([0-9.]+)",
-        r"(?:loss|erro|error|wer|cer)\s*[:=]\s*([0-9.]+)",
-    )
-    for pattern in metric_patterns:
-        match = re.search(pattern, line, re.IGNORECASE)
-        if not match:
-            continue
-        value = float(match.group(1))
-        if re.search(r"loss|erro|error|wer|cer", pattern, re.IGNORECASE):
-            value = -value
+    if value.startswith("voices/") or value.startswith("libraries/"):
         return value
-    return None
+    remote_dir = manifest.get("huggingface_remote_dir") or str(Path(manifest_path).parent).replace("\\", "/")
+    return f"{remote_dir.rstrip('/')}/{value.lstrip('/')}"
 
 
-def select_reference_audio_from_logs(root: Path) -> Path | None:
-    wav_pattern = re.compile(r"([\w./-]+\.wav)", re.IGNORECASE)
-    best: tuple[float, Path] | None = None
+def choose_manifest(remote_files: dict[str, RemoteFile], root: Path, repo_id: str, revision: str, token: str | None) -> tuple[str, Path, dict[str, Any]]:
+    manifest_paths = sorted(path for path in remote_files if re.fullmatch(r"voices/[^/]+/manifest\.json", path))
+    if not manifest_paths:
+        raise RuntimeError("Nenhum manifest.json F5-TTS encontrado em voices/*/manifest.json.")
 
-    for log_path in find_training_logs(root):
-        if log_path.name.startswith("events.out.tfevents"):
-            continue
-        for line in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            score = score_audio_reference_line(line)
-            if score is None:
-                continue
-            for raw_path in wav_pattern.findall(line):
-                candidate = (root / raw_path).resolve()
-                if candidate.exists() and (best is None or score > best[0]):
-                    best = (score, candidate)
+    candidates: list[tuple[int, str, Path, dict[str, Any]]] = []
+    for remote_path in manifest_paths:
+        local_path = download_remote_file(remote_path, root, repo_id, revision, token, remote_files[remote_path].expected_size)
+        manifest = load_json(local_path)
+        score = 0
+        if manifest.get("architecture") == "F5-TTS":
+            score += 100
+        if manifest.get("package_name") == PREFERRED_VOICE_PACKAGE:
+            score += 50
+        if manifest.get("huggingface_remote_dir", "").endswith(PREFERRED_VOICE_PACKAGE):
+            score += 30
+        if remote_path.startswith(f"voices/{PREFERRED_VOICE_PACKAGE}/"):
+            score += 20
+        if resolve_manifest_remote_path(manifest, remote_path, manifest.get("voice_checkpoint")) in remote_files:
+            score += 10
+        candidates.append((score, remote_path, local_path, manifest))
 
-    if best:
-        print(f"Audio de referencia escolhido pelo log: {best[1]} (score={best[0]:.4f})")
-        return best[1]
-    return None
-
-
-def select_reference_audio(root: Path) -> Path | None:
-    from_log = select_reference_audio_from_logs(root)
-    if from_log:
-        return from_log
-
-    for relative_path in REFERENCE_CANDIDATES:
-        candidate = root / relative_path
-        if candidate.exists():
-            print("Audio de referencia escolhido:", candidate)
-            return candidate
-
-    val_list = root / "data_reference" / "val_list.txt"
-    if val_list.exists():
-        for line in val_list.read_text(encoding="utf-8", errors="ignore").splitlines():
-            raw_path = line.split("|", 1)[0].strip()
-            candidate = root / "data_reference" / raw_path
-            if candidate.exists() and candidate.suffix.lower() == ".wav":
-                print("Audio de referencia escolhido pela val_list:", candidate)
-                return candidate
-
-    wav_files = sorted((root / "data_reference").rglob("*.wav")) if (root / "data_reference").exists() else []
-    if wav_files:
-        print("Audio de referencia escolhido pelo primeiro WAV encontrado:", wav_files[0])
-        return wav_files[0]
-
-    return None
+    score, remote_path, local_path, manifest = sorted(candidates, reverse=True)[0]
+    if manifest.get("architecture") != "F5-TTS":
+        raise RuntimeError(f"Manifesto escolhido nao e F5-TTS: {remote_path}")
+    LOGGER.info("Manifesto escolhido: %s (score=%s)", remote_path, score)
+    return remote_path, local_path, manifest
 
 
-def find_coqui_bundle(root: Path) -> ModelBundle | None:
-    model_path = select_checkpoint_path(root)
-    if not model_path:
-        return None
+def choose_checkpoint(manifest: dict[str, Any], manifest_remote_path: str, remote_files: dict[str, RemoteFile]) -> CheckpointChoice:
+    policy = (
+        ("voice_checkpoint", "checkpoint recomendado pelo manifest.json"),
+        ("inference_checkpoint", "checkpoint final de inferencia do manifest.json"),
+        ("final_checkpoint", "checkpoint final do manifest.json"),
+        ("latest_checkpoint", "checkpoint mais recente do manifest.json"),
+    )
+    for key, reason in policy:
+        remote_path = resolve_manifest_remote_path(manifest, manifest_remote_path, manifest.get(key))
+        if remote_path and remote_path in remote_files and remote_path.endswith((".pt", ".safetensors")):
+            return CheckpointChoice(remote_path, reason, remote_files[remote_path].expected_size)
 
-    config_path = nearest_config_for_checkpoint(model_path, root, ("config.json",))
-    if not config_path:
-        return None
+    voice_dir = manifest.get("huggingface_remote_dir") or str(Path(manifest_remote_path).parent).replace("\\", "/")
+    fallback_names = ("model/model_last.safetensors", "model/model_last.pt", "model/latest_checkpoint.pt")
+    for name in fallback_names:
+        remote_path = f"{voice_dir.rstrip('/')}/{name}"
+        if remote_path in remote_files:
+            return CheckpointChoice(remote_path, f"fallback validado existente: {name}", remote_files[remote_path].expected_size)
 
-    return ModelBundle("coqui", model_path, config_path, select_reference_audio(root))
-
-
-def find_styletts2_bundle(root: Path) -> ModelBundle | None:
-    model_path = select_checkpoint_path(root)
-    if not model_path:
-        return None
-
-    config_path = nearest_config_for_checkpoint(model_path, root, ("*.yml", "*.yaml"))
-    if not config_path:
-        return None
-
-    config_text = config_path.read_text(encoding="utf-8", errors="ignore")
-    styletts2_markers = ("ASR_config", "PLBERT_dir", "model_params", "preprocess_params")
-    if not all(marker in config_text for marker in styletts2_markers):
-        return None
-
-    return ModelBundle("styletts2", model_path, config_path, select_reference_audio(root))
+    raise RuntimeError("Nenhum checkpoint F5-TTS valido encontrado pelo manifesto ou fallbacks F5.")
 
 
-def find_piper_bundle(root: Path) -> ModelBundle | None:
-    onnx_files = sorted(root.rglob("*.onnx"))
-    if not onnx_files:
-        return None
-    return ModelBundle("piper", onnx_files[0], reference_audio_path=select_reference_audio(root))
-
-
-def read_reference_text(reference_audio_path: Path | None) -> str | None:
-    if not reference_audio_path:
-        return None
+def infer_reference_text_path(reference_audio_remote_path: str, remote_files: dict[str, RemoteFile]) -> str | None:
+    audio = Path(reference_audio_remote_path)
     candidates = [
-        reference_audio_path.with_suffix(".txt"),
-        reference_audio_path.parent / "referencia_voz.txt",
+        str(audio.with_suffix(".txt")).replace("\\", "/"),
+        str(audio.parent / "referencia_voz.txt").replace("\\", "/"),
+        str(audio.parent / "reference.txt").replace("\\", "/"),
     ]
     for candidate in candidates:
-        if candidate.exists():
-            text = candidate.read_text(encoding="utf-8", errors="ignore").strip()
-            if text:
-                return text
+        if candidate in remote_files:
+            return candidate
     return None
 
 
-def find_f5_bundle(root: Path) -> ModelBundle | None:
-    selected = select_f5_manifest(root, [path.relative_to(root).as_posix() for path in iter_files(root)])
-    if not selected:
-        return None
+def get_f5_config(manifest: dict[str, Any], setting: dict[str, Any] | None = None) -> dict[str, Any]:
+    exp_name = manifest.get("exp_name") or (setting or {}).get("exp_name")
+    if exp_name != "F5TTS_v1_Base":
+        raise RuntimeError(
+            "O repositorio nao contem configuracao completa para uma arquitetura diferente de F5TTS_v1_Base. "
+            f"exp_name encontrado: {exp_name!r}"
+        )
+    config = json.loads(json.dumps(DEFAULT_F5TTS_V1_BASE_CONFIG))
+    config["tokenizer"] = manifest.get("tokenizer") or (setting or {}).get("tokenizer_type") or "char"
+    if config["tokenizer"] != "char":
+        raise RuntimeError(f"Tokenizer nao suportado para esta voz: {config['tokenizer']}")
+    return config
 
-    manifest_path, manifest = selected
-    voice_dir = manifest_path.parent
-    checkpoint_candidates = [
-        resolve_manifest_path(root, manifest_path, manifest.get("voice_checkpoint")),
-        resolve_manifest_path(root, manifest_path, manifest.get("latest_checkpoint")),
-        voice_dir / "model" / "model_last.pt",
-        voice_dir / "model" / "latest_checkpoint.pt",
-    ]
-    model_path = next((path for path in checkpoint_candidates if path and path.exists()), None)
-    if not model_path:
-        return None
+
+def build_voice_package(
+    repo_id: str = HF_REPO_ID,
+    revision: str = HF_REVISION,
+    root: Path = MODEL_ROOT,
+    token: str | None = None,
+    download_checkpoint: bool = True,
+) -> VoicePackage:
+    token = token or get_hf_token()
+    remote_files = list_remote_files(repo_id, revision, token)
+    manifest_remote_path, local_manifest_path, manifest = choose_manifest(remote_files, root, repo_id, revision, token)
+    voice_dir = manifest.get("huggingface_remote_dir") or str(Path(manifest_remote_path).parent).replace("\\", "/")
+
+    checkpoint = choose_checkpoint(manifest, manifest_remote_path, remote_files)
+    vocab_remote_path = f"{voice_dir.rstrip('/')}/model/vocab.txt"
+    if vocab_remote_path not in remote_files:
+        raise RuntimeError(f"Vocabulario da voz nao encontrado: {vocab_remote_path}")
 
     base_library = manifest.get("base_library") or {}
-    base_dir = root / (base_library.get("huggingface_remote_dir") or "")
-    vocab_candidates = [
-        voice_dir / "model" / "vocab.txt",
-        base_dir / "vocab.txt",
-    ]
-    vocab_path = next((path for path in vocab_candidates if path.exists()), None)
+    base_library_dir = base_library.get("huggingface_remote_dir")
+    base_vocab_remote_path = f"{base_library_dir}/vocab.txt" if base_library_dir else None
+    if base_vocab_remote_path and base_vocab_remote_path not in remote_files:
+        LOGGER.warning("Vocabulario da biblioteca-base declarado, mas ausente: %s", base_vocab_remote_path)
+        base_vocab_remote_path = None
 
-    reference_audio_path = voice_dir / "data_reference" / "referencia_voz.wav"
-    if not reference_audio_path.exists():
-        reference_audio_path = select_reference_audio(voice_dir)
+    reference_audio_remote_path = f"{voice_dir.rstrip('/')}/data_reference/referencia_voz.wav"
+    if reference_audio_remote_path not in remote_files:
+        raise RuntimeError(f"Audio de referencia nao encontrado: {reference_audio_remote_path}")
+    reference_text_remote_path = infer_reference_text_path(reference_audio_remote_path, remote_files)
 
-    reference_text = read_reference_text(reference_audio_path)
-    if reference_audio_path and not reference_text:
-        print("Aviso: texto da referencia nao encontrado. O F5-TTS tentara transcrever o audio automaticamente.")
+    setting_remote_path = f"{base_library_dir}/setting.json" if base_library_dir else None
+    local_setting_path = None
+    setting = None
+    if setting_remote_path and setting_remote_path in remote_files:
+        local_setting_path = download_remote_file(setting_remote_path, root, repo_id, revision, token, remote_files[setting_remote_path].expected_size)
+        setting = load_json(local_setting_path)
 
-    return ModelBundle(
-        "f5_tts",
-        model_path,
-        reference_audio_path=reference_audio_path,
-        reference_text=reference_text,
-        vocab_path=vocab_path,
-        model_name=manifest.get("exp_name") or "F5TTS_v1_Base",
+    config = get_f5_config(manifest, setting)
+    package = VoicePackage(
+        repo_id=repo_id,
+        revision=revision,
+        root=root,
+        voice_dir=voice_dir,
+        manifest_path=local_manifest_path,
+        manifest=manifest,
+        checkpoint=checkpoint,
+        vocab_remote_path=vocab_remote_path,
+        base_vocab_remote_path=base_vocab_remote_path,
+        reference_audio_remote_path=reference_audio_remote_path,
+        reference_text_remote_path=reference_text_remote_path,
+        base_library_dir=base_library_dir,
+        setting_remote_path=setting_remote_path if setting_remote_path in remote_files else None,
+        config=config,
+        remote_files=remote_files,
+        local_setting_path=local_setting_path,
+    )
+    download_required_artifacts(package, token=token, download_checkpoint=download_checkpoint)
+    return package
+
+
+def download_required_artifacts(package: VoicePackage, token: str | None = None, download_checkpoint: bool = True) -> VoicePackage:
+    token = token or get_hf_token()
+    package.local_vocab_path = download_remote_file(
+        package.vocab_remote_path,
+        package.root,
+        package.repo_id,
+        package.revision,
+        token,
+        package.remote_files[package.vocab_remote_path].expected_size,
+    )
+    if package.base_vocab_remote_path:
+        package.local_base_vocab_path = download_remote_file(
+            package.base_vocab_remote_path,
+            package.root,
+            package.repo_id,
+            package.revision,
+            token,
+            package.remote_files[package.base_vocab_remote_path].expected_size,
+        )
+    package.local_reference_audio_path = download_remote_file(
+        package.reference_audio_remote_path,
+        package.root,
+        package.repo_id,
+        package.revision,
+        token,
+        package.remote_files[package.reference_audio_remote_path].expected_size,
+    )
+    if package.reference_text_remote_path:
+        package.local_reference_text_path = download_remote_file(
+            package.reference_text_remote_path,
+            package.root,
+            package.repo_id,
+            package.revision,
+            token,
+            package.remote_files[package.reference_text_remote_path].expected_size,
+        )
+    else:
+        LOGGER.warning("Texto exato da referencia nao existe no pacote da voz; F5-TTS tentara transcrever com ASR.")
+
+    if download_checkpoint:
+        package.local_checkpoint_path = download_remote_file(
+            package.checkpoint.remote_path,
+            package.root,
+            package.repo_id,
+            package.revision,
+            token,
+            package.checkpoint.expected_size,
+        )
+    else:
+        package.local_checkpoint_path = package.root / package.checkpoint.remote_path
+    return package
+
+
+def read_vocab(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    return [line.rstrip("\n\r") for line in text.splitlines()]
+
+
+def validate_vocab(vocab_path: Path, base_vocab_path: Path | None = None) -> dict[str, Any]:
+    tokens = read_vocab(vocab_path)
+    non_empty = [token for token in tokens if token != ""]
+    duplicates = sorted({token for token in non_empty if non_empty.count(token) > 1})
+    chars = set("".join(non_empty))
+    missing_pt = sorted(char for char in PORTUGUESE_REQUIRED_CHARS if char not in chars)
+    report: dict[str, Any] = {
+        "path": str(vocab_path),
+        "tokens": len(tokens),
+        "empty_lines": len(tokens) - len(non_empty),
+        "duplicates": duplicates,
+        "missing_portuguese_chars": missing_pt,
+        "utf8": True,
+    }
+    if base_vocab_path and base_vocab_path.exists():
+        base_tokens = read_vocab(base_vocab_path)
+        report["base_path"] = str(base_vocab_path)
+        report["base_tokens"] = len(base_tokens)
+        report["same_as_base"] = tokens == base_tokens
+        report["only_voice"] = sorted(set(tokens) - set(base_tokens))[:50]
+        report["only_base"] = sorted(set(base_tokens) - set(tokens))[:50]
+    LOGGER.info("Relatorio vocabulario: %s", json.dumps(report, ensure_ascii=False, indent=2))
+    if not non_empty:
+        raise RuntimeError(f"Vocabulario vazio: {vocab_path}")
+    if duplicates:
+        raise RuntimeError(f"Vocabulario contem tokens duplicados: {duplicates[:10]}")
+    return report
+
+
+def safe_torch_load(path: Path, map_location: str = "cpu") -> Any:
+    import torch
+
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
+
+
+def tensor_shape(value: Any) -> tuple[int, ...] | None:
+    shape = getattr(value, "shape", None)
+    if shape is None:
+        return None
+    return tuple(int(part) for part in shape)
+
+
+def inspect_checkpoint(checkpoint_path: Path, vocab_path: Path | None = None) -> dict[str, Any]:
+    suffix = checkpoint_path.suffix.lower()
+    if suffix == ".safetensors":
+        from safetensors.torch import load_file
+
+        checkpoint = load_file(str(checkpoint_path), device="cpu")
+    else:
+        checkpoint = safe_torch_load(checkpoint_path, map_location="cpu")
+
+    info: dict[str, Any] = {
+        "path": str(checkpoint_path),
+        "object_type": type(checkpoint).__name__,
+        "top_level_keys": [],
+        "has_ema": False,
+        "has_model_state": False,
+        "has_optimizer": False,
+        "has_scheduler": False,
+        "has_scaler": False,
+        "step": None,
+        "epoch": None,
+        "selected_weight_key": None,
+        "text_embedding_shape": None,
+        "vocab_tokens": None,
+        "vocab_compatible": None,
+    }
+    if isinstance(checkpoint, dict):
+        info["top_level_keys"] = sorted(str(key) for key in checkpoint.keys())[:100]
+        info["has_ema"] = any(key in checkpoint for key in ("ema_model_state_dict", "ema_model"))
+        info["has_model_state"] = any(key in checkpoint for key in ("model_state_dict", "state_dict", "model"))
+        info["has_optimizer"] = any("optim" in str(key).lower() for key in checkpoint)
+        info["has_scheduler"] = any("sched" in str(key).lower() for key in checkpoint)
+        info["has_scaler"] = any("scaler" in str(key).lower() for key in checkpoint)
+        info["step"] = checkpoint.get("step") or checkpoint.get("global_step") or checkpoint.get("update")
+        info["epoch"] = checkpoint.get("epoch")
+        state = select_inference_state_dict(checkpoint)
+        info["selected_weight_key"] = state[0]
+        for key, value in state[1].items():
+            if key.endswith("text_embed.weight") or "text_embed" in key and key.endswith(".weight"):
+                info["text_embedding_shape"] = tensor_shape(value)
+                break
+    else:
+        raise RuntimeError(f"Checkpoint possui tipo inesperado para inferencia: {type(checkpoint).__name__}")
+
+    if vocab_path:
+        tokens = read_vocab(vocab_path)
+        info["vocab_tokens"] = len(tokens)
+        shape = info["text_embedding_shape"]
+        if shape:
+            info["vocab_compatible"] = shape[0] in (len(tokens), len(tokens) + 1, len(tokens) + 2)
+
+    LOGGER.info("Inspecao do checkpoint: %s", json.dumps(info, ensure_ascii=False, default=str, indent=2))
+    return info
+
+
+def select_inference_state_dict(checkpoint: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    candidates = (
+        "ema_model_state_dict",
+        "ema_model",
+        "model_state_dict",
+        "state_dict",
+        "model",
+    )
+    for key in candidates:
+        value = checkpoint.get(key)
+        if isinstance(value, dict) and value:
+            if key.startswith("ema"):
+                cleaned = {str(k).replace("ema_model.", ""): v for k, v in value.items() if k not in ("initted", "step")}
+                return key, cleaned
+            return key, value
+    if checkpoint and all(hasattr(value, "shape") for value in checkpoint.values()):
+        return "root_state_dict", checkpoint
+    raise RuntimeError("Nao encontrei pesos de inferencia em state_dict/model_state_dict/ema_model_state_dict.")
+
+
+def validate_reference_audio(audio_path: Path, expected_sample_rate: int = 24000) -> dict[str, Any]:
+    import soundfile as sf
+
+    info = sf.info(str(audio_path))
+    data, sr = sf.read(str(audio_path), always_2d=True)
+    duration = len(data) / sr if sr else 0.0
+    mono = data.mean(axis=1)
+    peak = float(abs(mono).max()) if len(mono) else 0.0
+    rms = float(math.sqrt(float((mono * mono).mean()))) if len(mono) else 0.0
+    report = {
+        "path": str(audio_path),
+        "format": info.format,
+        "sample_rate": sr,
+        "channels": data.shape[1],
+        "duration": duration,
+        "peak": peak,
+        "rms": rms,
+        "converted_path": None,
+    }
+    if duration <= 0 or peak <= 0 or rms <= 1e-5:
+        raise RuntimeError(f"Audio de referencia invalido ou silencioso: {report}")
+    if sr != expected_sample_rate or data.shape[1] != 1:
+        converted = audio_path.with_name(f"{audio_path.stem}_{expected_sample_rate}hz_mono.wav")
+        try:
+            import librosa
+
+            mono_24k, _ = librosa.load(str(audio_path), sr=expected_sample_rate, mono=True)
+        except Exception:
+            mono_24k = mono
+        sf.write(str(converted), mono_24k, expected_sample_rate)
+        report["converted_path"] = str(converted)
+    LOGGER.info("Referencia de audio: %s", json.dumps(report, ensure_ascii=False, indent=2))
+    return report
+
+
+def read_reference_text(path: Path | None) -> str:
+    if not path or not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="ignore").strip()
+
+
+def detect_device(device: str = "auto") -> str:
+    if device != "auto":
+        return device
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return "xpu"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def generate_speech(
+    text: str,
+    output_path: str,
+    checkpoint_path: str,
+    vocab_path: str,
+    ref_audio_path: str,
+    ref_text: str,
+    device: str = "auto",
+    model_name: str = "F5TTS_v1_Base",
+    model_config: dict[str, Any] | None = None,
+) -> str:
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Texto vazio para sintese.")
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from f5_tts.infer.utils_infer import infer_process, load_model, load_vocoder, preprocess_ref_audio_text
+    from hydra.utils import get_class
+
+    selected_device = detect_device(device)
+    config = model_config or DEFAULT_F5TTS_V1_BASE_CONFIG
+    if model_name != "F5TTS_v1_Base":
+        raise RuntimeError(f"Modelo F5-TTS nao suportado por este pacote: {model_name}")
+
+    model_cls = get_class(f"f5_tts.model.{config['backbone']}")
+    mel_spec = config["mel_spec"]
+    LOGGER.info("Dispositivo: %s", selected_device)
+    LOGGER.info("Arquitetura: %s %s", model_name, json.dumps(config["arch"], ensure_ascii=False))
+    LOGGER.info("Tokenizer: %s", config["tokenizer"])
+    LOGGER.info("Vocoder: %s", mel_spec["mel_spec_type"])
+
+    try:
+        vocoder = load_vocoder(vocoder_name=mel_spec["mel_spec_type"], device=selected_device)
+    except Exception as exc:
+        LOGGER.error("Falha ao carregar vocoder. Verifique internet/cache do Kaggle.")
+        LOGGER.error("Traceback completo:\n%s", "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        raise
+
+    use_ema = True
+    ckpt_info = inspect_checkpoint(Path(checkpoint_path), Path(vocab_path))
+    if not ckpt_info.get("has_ema"):
+        use_ema = False
+    LOGGER.info("Uso de EMA: %s", use_ema)
+
+    model = load_model(
+        model_cls,
+        config["arch"],
+        checkpoint_path,
+        mel_spec_type=mel_spec["mel_spec_type"],
+        vocab_file=vocab_path,
+        use_ema=use_ema,
+        device=selected_device,
+    )
+
+    processed_ref_audio, processed_ref_text = preprocess_ref_audio_text(ref_audio_path, ref_text, show_info=LOGGER.info)
+    final_wave, final_sample_rate, _ = infer_process(
+        processed_ref_audio,
+        processed_ref_text,
+        text,
+        model,
+        vocoder,
+        mel_spec_type=mel_spec["mel_spec_type"],
+        cross_fade_duration=0.15,
+        nfe_step=32,
+        speed=1.0,
+        show_info=LOGGER.info,
+        device=selected_device,
+    )
+    if final_wave is None or len(final_wave) == 0:
+        raise RuntimeError("Inferencia retornou audio vazio.")
+
+    final_wave = np.asarray(final_wave, dtype=np.float32)
+    peak = float(np.max(np.abs(final_wave)))
+    rms = float(np.sqrt(np.mean(final_wave * final_wave)))
+    duration = len(final_wave) / float(final_sample_rate)
+    if peak <= 0 or rms <= 1e-5:
+        raise RuntimeError(f"Audio gerado parece silencioso: peak={peak}, rms={rms}")
+
+    sf.write(str(output), final_wave, final_sample_rate)
+    validate_downloaded_file(output)
+    LOGGER.info("Audio gerado: %s", output)
+    LOGGER.info("Duracao gerada: %.3fs | peak=%.6f | rms=%.6f", duration, peak, rms)
+
+    del model
+    del vocoder
+    if selected_device == "cuda":
+        torch.cuda.empty_cache()
+    return str(output)
+
+
+def audit_voice_package(download_checkpoint: bool = False) -> tuple[VoicePackage, DiagnosticReport]:
+    package = build_voice_package(download_checkpoint=download_checkpoint)
+    report = DiagnosticReport()
+
+    report.add("Manifesto", True, str(package.manifest_path))
+    report.add("Checkpoint principal", package.checkpoint.remote_path in package.remote_files, package.checkpoint.remote_path)
+    report.add("Arquitetura identificada", package.manifest.get("architecture") == "F5-TTS", package.manifest.get("exp_name", ""))
+    report.add("Vocab encontrado", bool(package.local_vocab_path and package.local_vocab_path.exists()), str(package.local_vocab_path))
+
+    try:
+        vocab_report = validate_vocab(package.local_vocab_path, package.local_base_vocab_path)
+        report.add("Vocab compativel", not vocab_report.get("duplicates"), f"{vocab_report['tokens']} tokens")
+    except Exception as exc:
+        report.add("Vocab compativel", False, str(exc))
+
+    report.add("Referencia de audio", bool(package.local_reference_audio_path and package.local_reference_audio_path.exists()), str(package.local_reference_audio_path))
+    ref_text = read_reference_text(package.local_reference_text_path)
+    report.add("Texto da referencia", bool(ref_text), "arquivo encontrado" if ref_text else "ausente; ASR sera usado")
+    report.add("Vocoder", package.config["mel_spec"]["mel_spec_type"] == "vocos", package.config["mel_spec"]["mel_spec_type"])
+
+    try:
+        import torch
+
+        report.add("CUDA", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU disponivel")
+    except Exception as exc:
+        report.add("CUDA", False, str(exc))
+
+    if download_checkpoint and package.local_checkpoint_path and package.local_checkpoint_path.exists():
+        try:
+            inspect_checkpoint(package.local_checkpoint_path, package.local_vocab_path)
+            report.add("Checkpoint legivel", True, str(package.local_checkpoint_path))
+        except Exception as exc:
+            report.add("Checkpoint legivel", False, str(exc))
+    else:
+        report.add("Checkpoint legivel", False, "nao baixado nesta auditoria leve")
+
+    LOGGER.info("\n%s", report.render())
+    print(report.render())
+    return package, report
+
+
+def report_training_artifacts(package: VoicePackage) -> dict[str, Any]:
+    files = package.remote_files
+    inference_required = {
+        "checkpoint de inferencia": package.checkpoint.remote_path,
+        "vocabulario correspondente": package.vocab_remote_path,
+        "configuracao da arquitetura": "recuperada de F5TTS_v1_Base no runtime f5-tts",
+        "tokenizer": package.manifest.get("tokenizer"),
+        "audio de referencia": package.reference_audio_remote_path,
+        "transcricao da referencia": package.reference_text_remote_path,
+        "vocoder e parametros de audio": "F5TTS_v1_Base/vocos/24000Hz/100mel",
+    }
+    training_required = {
+        "checkpoint completo": package.checkpoint.remote_path,
+        "estado do otimizador": None,
+        "scheduler": None,
+        "scaler AMP": None,
+        "pesos EMA": "a confirmar pela inspecao do checkpoint",
+        "contador epoch/update": "a confirmar pela inspecao do checkpoint",
+        "configuracao completa do treinamento": package.setting_remote_path,
+        "seed": None,
+        "commit F5-TTS": None,
+        "versoes das dependencias": None,
+        "dataset": package.manifest.get("base_library", {}).get("repo_id"),
+        "metadata/raw.arrow": None,
+        "duration.json": f"{package.voice_dir}/docs/duration.json" if f"{package.voice_dir}/docs/duration.json" in files else None,
+        "audios de treino": None,
+        "train/validation split": None,
+        "vocabulario": package.vocab_remote_path,
+        "logs e metricas": f"{package.voice_dir}/docs/duration.json" if f"{package.voice_dir}/docs/duration.json" in files else None,
+        "checkpoint-base exato": f"{package.base_library_dir}/{package.manifest.get('base_library', {}).get('checkpoint')}" if package.base_library_dir else None,
+    }
+    report = {
+        "obrigatorios_inferencia": inference_required,
+        "treinamento_reproducao": training_required,
+        "presentes": sorted(path for path in files),
+        "ausentes_inferencia": [key for key, value in inference_required.items() if not value],
+        "ausentes_treinamento": [key for key, value in training_required.items() if not value],
+    }
+    LOGGER.info("Relatorio de artefatos: %s", json.dumps(report, ensure_ascii=False, indent=2))
+    return report
+
+
+def prepare_model_files(download: bool = True) -> VoicePackage:
+    return build_voice_package(download_checkpoint=download)
+
+
+def synthesize_for_notebook(text: str = TEST_TEXT, output_path: str = "/kaggle/working/resultado_voz.wav") -> str:
+    package = build_voice_package(download_checkpoint=True)
+    validate_vocab(package.local_vocab_path, package.local_base_vocab_path)
+    validate_reference_audio(package.local_reference_audio_path, package.config["mel_spec"]["target_sample_rate"])
+    ref_text = read_reference_text(package.local_reference_text_path)
+    return generate_speech(
+        text=text,
+        output_path=output_path,
+        checkpoint_path=str(package.local_checkpoint_path),
+        vocab_path=str(package.local_vocab_path),
+        ref_audio_path=str(package.local_reference_audio_path),
+        ref_text=ref_text,
+        model_name=package.manifest.get("exp_name", "F5TTS_v1_Base"),
+        model_config=package.config,
     )
 
 
-def detect_model_bundle(root: Path) -> ModelBundle:
-    f5_tts = find_f5_bundle(root)
-    if f5_tts:
-        return f5_tts
-
-    styletts2 = find_styletts2_bundle(root)
-    if styletts2:
-        return styletts2
-
-    coqui = find_coqui_bundle(root)
-    if coqui:
-        return coqui
-
-    piper = find_piper_bundle(root)
-    if piper:
-        return piper
-
-    pth_files = sorted(root.rglob("*.pth"))
-    if pth_files:
-        names = ", ".join(path.name for path in pth_files)
-        raise RuntimeError(
-            "Encontrei arquivo .pth, mas nao encontrei configuracao suportada. "
-            f"Arquivos .pth encontrados: {names}"
-        )
-
-    raise RuntimeError("Nao encontrei modelo suportado em /kaggle/working/Super_voz.")
-
-
-def patch_torch_load_for_styletts2():
-    import torch
-
-    original_load = torch.load
-
-    def load_with_legacy_checkpoint_support(*args, **kwargs):
-        kwargs.setdefault("weights_only", False)
-        return original_load(*args, **kwargs)
-
-    torch.load = load_with_legacy_checkpoint_support
-    return original_load
-
-
-def restore_torch_load(original_load) -> None:
-    import torch
-
-    torch.load = original_load
-
-
-def report_styletts2_auxiliary_paths(config_path: Path) -> None:
-    config_text = config_path.read_text(encoding="utf-8", errors="ignore")
-    relative_paths = re.findall(r"(?:ASR_config|ASR_path|F0_path|PLBERT_dir):\s*([^,\n}]+)", config_text)
-    missing_paths = []
-    for relative_path in relative_paths:
-        candidate = config_path.parent / relative_path.strip()
-        if not candidate.exists():
-            missing_paths.append(candidate)
-
-    if missing_paths:
-        print("Aviso: arquivos auxiliares do StyleTTS2 nao encontrados localmente:")
-        for path in missing_paths:
-            print(f"- {path}")
-
-
-class NeuralVoiceSynthesizer:
-    def __init__(self, bundle: ModelBundle, output_dir: Path = OUTPUT_DIR):
-        self.bundle = bundle
-        self.output_dir = output_dir
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.tts = None
-        self.vocoder = None
-        self.f5_ref_audio = None
-        self.f5_ref_text = None
-        self._load()
-
-    def _load(self) -> None:
-        if self.bundle.engine == "f5_tts":
-            import torch
-            from f5_tts.infer.utils_infer import load_model, load_vocoder
-            from f5_tts.model import DiT
-
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model_cfg = self.bundle.model_cfg or {
-                "dim": 1024,
-                "depth": 22,
-                "heads": 16,
-                "ff_mult": 2,
-                "text_dim": 512,
-                "conv_layers": 4,
-            }
-            vocab_file = str(self.bundle.vocab_path) if self.bundle.vocab_path else ""
-
-            self.vocoder = load_vocoder(vocoder_name="vocos", device=device)
-            self.tts = load_model(
-                DiT,
-                model_cfg,
-                str(self.bundle.model_path),
-                mel_spec_type="vocos",
-                vocab_file=vocab_file,
-                device=device,
-            )
-            print("Modelo F5-TTS carregado.")
-            return
-
-        if self.bundle.engine == "coqui":
-            import torch
-            from TTS.api import TTS
-
-            self.tts = TTS(
-                model_path=str(self.bundle.model_path),
-                config_path=str(self.bundle.config_path),
-                progress_bar=True,
-                gpu=torch.cuda.is_available(),
-            )
-            print("Modelo Coqui carregado.")
-            return
-
-        if self.bundle.engine == "piper":
-            print("Modelo Piper pronto para inferencia.")
-            return
-
-        if self.bundle.engine == "styletts2":
-            fix_styletts2_config_paths(self.bundle.config_path)
-            report_styletts2_auxiliary_paths(self.bundle.config_path)
-            patch_styletts2_typing()
-            patch_styletts2_language()
-            patch_styletts2_text_cleaner()
-            original_torch_load = patch_torch_load_for_styletts2()
-            previous_cwd = Path.cwd()
-            os.chdir(self.bundle.config_path.parent)
-            try:
-                from styletts2 import tts
-
-                self.tts = tts.StyleTTS2(
-                    model_checkpoint_path=str(self.bundle.model_path),
-                    config_path=str(self.bundle.config_path),
-                )
-            finally:
-                os.chdir(previous_cwd)
-                restore_torch_load(original_torch_load)
-            print("Modelo StyleTTS2 carregado.")
-            return
-
-        raise ValueError(f"Engine nao suportada: {self.bundle.engine}")
-
-    @staticmethod
-    def _choose_first(values, preferred: list[str] | None = None):
-        if not values:
-            return None
-        preferred = preferred or []
-        lowered = {str(value).lower(): value for value in values}
-        for item in preferred:
-            if item.lower() in lowered:
-                return lowered[item.lower()]
-        return values[0]
-
-    def _next_wav_path(self) -> Path:
-        index = len(list(self.output_dir.glob("audio_*.wav"))) + 1
-        return self.output_dir / f"audio_{index:04d}.wav"
-
-    def synthesize(self, text: str) -> str:
-        text = (text or "").strip()
-        if not text:
-            raise ValueError("Digite uma frase antes de gerar o audio.")
-
-        wav_path = self._next_wav_path()
-        if self.bundle.engine == "coqui":
-            kwargs = {"text": text, "file_path": str(wav_path)}
-            speakers = getattr(self.tts, "speakers", None)
-            languages = getattr(self.tts, "languages", None)
-            speaker = self._choose_first(speakers)
-            language = self._choose_first(languages, ["pt-br", "pt", "portuguese", "portugues"])
-            if speaker:
-                kwargs["speaker"] = speaker
-            if language:
-                kwargs["language"] = language
-            if self.bundle.reference_audio_path and "speaker_wav" in inspect.signature(self.tts.tts_to_file).parameters:
-                kwargs["speaker_wav"] = str(self.bundle.reference_audio_path)
-            self.tts.tts_to_file(**kwargs)
-            return str(wav_path)
-
-        if self.bundle.engine == "styletts2":
-            kwargs = {"output_wav_file": str(wav_path), "output_sample_rate": 24000}
-            parameters = inspect.signature(self.tts.inference).parameters
-            
-            for name in ("target_voice_path", "reference_audio_path", "speaker_wav"):
-                if self.bundle.reference_audio_path and name in parameters:
-                    kwargs[name] = str(self.bundle.reference_audio_path)
-                    break
-            self.tts.inference(text, **kwargs)
-            return str(wav_path)
-
-        if self.bundle.engine == "f5_tts":
-            import soundfile as sf
-            from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
-
-            if not self.bundle.reference_audio_path:
-                raise RuntimeError("Modelo F5-TTS precisa de um audio de referencia.")
-
-            if not self.f5_ref_audio:
-                self.f5_ref_audio, self.f5_ref_text = preprocess_ref_audio_text(
-                    str(self.bundle.reference_audio_path),
-                    self.bundle.reference_text or "",
-                    show_info=print,
-                )
-
-            final_wave, final_sample_rate, _ = infer_process(
-                self.f5_ref_audio,
-                self.f5_ref_text or "",
-                text,
-                self.tts,
-                self.vocoder,
-                mel_spec_type="vocos",
-                cross_fade_duration=0.15,
-                nfe_step=32,
-                speed=1.0,
-                show_info=print,
-            )
-            sf.write(str(wav_path), final_wave, final_sample_rate)
-            return str(wav_path)
-
-        run_command(["piper", "--model", str(self.bundle.model_path), "--output_file", str(wav_path)], input_text=text)
-        return str(wav_path)
-
-
-def create_gradio_app(synthesizer: NeuralVoiceSynthesizer):
+def create_gradio_app():
     import gradio as gr
+
+    package_holder: dict[str, VoicePackage] = {}
 
     def generate(text: str):
         try:
-            audio_path = synthesizer.synthesize(text)
+            if "package" not in package_holder:
+                package_holder["package"] = build_voice_package(download_checkpoint=True)
+            package = package_holder["package"]
+            output_path = OUTPUT_DIR / "resultado_voz_gradio.wav"
+            audio_path = generate_speech(
+                text=text,
+                output_path=str(output_path),
+                checkpoint_path=str(package.local_checkpoint_path),
+                vocab_path=str(package.local_vocab_path),
+                ref_audio_path=str(package.local_reference_audio_path),
+                ref_text=read_reference_text(package.local_reference_text_path),
+                model_name=package.manifest.get("exp_name", "F5TTS_v1_Base"),
+                model_config=package.config,
+            )
             return audio_path, audio_path, f"Audio gerado: {audio_path}"
         except Exception as exc:
+            LOGGER.exception("Erro no Gradio")
             return None, None, f"Erro: {exc}"
 
-    with gr.Blocks(title="Super Voz") as demo:
-        gr.Markdown("# Super Voz")
-        text_box = gr.Textbox(label="Frase", placeholder="Digite sua frase e pressione Enter...", lines=1)
+    with gr.Blocks(title="Super Voz F5-TTS") as demo:
+        gr.Markdown("# Super Voz F5-TTS")
+        text_box = gr.Textbox(label="Texto", value=TEST_TEXT, lines=3)
+        button = gr.Button("Gerar WAV")
         audio = gr.Audio(label="Audio gerado", type="filepath")
-        download = gr.File(label="Download do WAV")
+        download = gr.File(label="Download")
         status = gr.Textbox(label="Status", interactive=False)
-        text_box.submit(generate, inputs=text_box, outputs=[audio, download, status]).then(lambda: "", outputs=text_box)
+        button.click(generate, inputs=text_box, outputs=[audio, download, status])
     return demo
 
 
-def display_notebook_audio(audio_path: str) -> str:
-    from IPython.display import Audio, FileLink, display
-
-    display(Audio(audio_path))
-    display(FileLink(audio_path, result_html_prefix="Download do WAV: "))
-    return audio_path
-
-
-def synthesize_for_notebook(synthesizer: NeuralVoiceSynthesizer, text: str) -> str:
-    audio_path = synthesizer.synthesize(text)
+def main() -> None:
+    package, report = audit_voice_package(download_checkpoint=True)
+    report_training_artifacts(package)
+    if not report.ready:
+        raise RuntimeError("Auditoria falhou; inferencia nao iniciada.")
+    audio_path = synthesize_for_notebook(TEST_TEXT, "/kaggle/working/resultado_voz.wav")
     print(f"Audio gerado: {audio_path}")
-    return display_notebook_audio(audio_path)
-
-
-def load_synthesizer(download: bool = False) -> NeuralVoiceSynthesizer:
-    root = prepare_model_files(download=download)
-    print_file_report(root)
-
-    bundle = detect_model_bundle(root)
-    print(f"Engine detectada: {bundle.engine}")
-    print(f"Modelo: {bundle.model_path}")
-    if bundle.config_path:
-        print(f"Config: {bundle.config_path}")
-    if bundle.vocab_path:
-        print(f"Vocabulario: {bundle.vocab_path}")
-    if bundle.reference_audio_path:
-        print(f"Audio referencia: {bundle.reference_audio_path}")
-    if bundle.reference_text:
-        print(f"Texto referencia: {bundle.reference_text}")
-
-    return NeuralVoiceSynthesizer(bundle)
-
-
-def prepare_model_files(download: bool = True) -> Path:
-    if download or not MODEL_ROOT.exists():
-        return download_hf_repo()
-    return MODEL_ROOT
-
-
-def main(download: bool = False) -> None:
-    synthesizer = load_synthesizer(download=download)
-    demo = create_gradio_app(synthesizer)
-    demo.launch(share=True, debug=True)
 
 
 if __name__ == "__main__":
-    main(download=True)
+    main()

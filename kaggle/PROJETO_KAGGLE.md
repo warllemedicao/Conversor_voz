@@ -1,131 +1,124 @@
-# Projeto Super Voz no Kaggle
+# Projeto Super Voz F5-TTS no Kaggle
 
-Este documento descreve a versao Kaggle do projeto e o comportamento esperado.
+Este projeto executa exclusivamente uma voz F5-TTS treinada no Hugging Face.
 
-## Estrutura da pasta
+## Historico
 
-```text
-README_kaggle.md
-PROJETO_KAGGLE.md
-conversor_voz_kaggle.ipynb
-conversor_voz_kaggle.py
-conversor_voz_requirements_kaggle.txt
-```
+### 2026-06-10
 
-Nao ha arquivos Colab, audios locais ou pesos versionados nessa pasta.
+- Reescrito o carregador Kaggle para trabalhar apenas com F5-TTS.
+- Implementada listagem recursiva do Hugging Face com metadados de tamanho/LFS.
+- Implementada politica explicita de selecao de checkpoint pelo manifesto.
+- Implementadas validacoes de manifesto, vocabulario, checkpoint, referencia de audio, arquitetura F5TTS_v1_Base e vocoder Vocos.
+- Registrados artefatos presentes e ausentes para inferencia e para retomada/reproducao de treinamento.
+- Removida a tolerancia a fallback silencioso quando a API do Hugging Face falha; o erro original agora e registrado com traceback completo.
 
 ## Fluxo atual
 
-O notebook foi simplificado para funcionar com `Run All`:
+1. Prepara ambiente Kaggle sem reinstalar indiscriminadamente NumPy/SciPy/Pandas.
+2. Instala `huggingface_hub`, `hf-xet`, `f5-tts`, `torch`, `torchaudio`, `soundfile` e auxiliares.
+3. Lista recursivamente `warllem/Super_voz`.
+4. Baixa e valida `voices/v_minha_voz_f5_tts_ptbr/manifest.json`.
+5. Resolve o checkpoint recomendado pelo manifesto.
+6. Baixa somente checkpoint escolhido, vocabularios e referencia.
+7. Inspeciona checkpoint e vocabulario.
+8. Carrega F5-TTS, Vocos e gera WAV.
 
-1. Prepara GPU/token e instala dependencias. Verifica se a GPU e compativel (avisa se for Tesla P100).
-2. Cria `/kaggle/working/conversor_voz_kaggle.py`.
-3. Baixa o pacote `warllem/Super_voz`:
-   - Etapa 1: Baixa metadados, logs e arquivos auxiliares (leves).
-   - Etapa 2: Analisa o melhor checkpoint e baixa **apenas** o arquivo `.pth` selecionado (evitando download de ~9GB).
-4. Carrega a voz e gera um audio.
-5. Permite gerar outro audio sem recarregar.
-6. Opcionalmente abre Gradio.
+## Politica de selecao do checkpoint
 
-Se qualquer etapa falhar, o notebook para e salva o traceback em:
+Ordem:
 
-```text
-/kaggle/working/super_voz_kaggle.log
-```
+1. `voice_checkpoint` do manifesto.
+2. `inference_checkpoint` ou `final_checkpoint`, se existirem.
+3. `latest_checkpoint` do manifesto.
+4. Fallback F5 validado por existencia remota, sem usar caminhos de estruturas antigas.
 
-## Por que o fluxo mudou
-
-As versoes anteriores tentavam reinstalar `numpy`, `scipy` e `pandas` dentro do notebook. No Kaggle, isso e instavel porque o kernel e varias bibliotecas pre-instaladas ja podem ter carregado NumPy em memoria. Trocar essas bibliotecas durante a sessao causou erros como:
-
-```text
-numpy.dtype size changed
-cannot load module more than once per process
-AttributeError: module 'numpy' has no attribute '_no_nep50_warning'
-```
-
-Por isso, a versao atual detecta as versoes nativas do Kaggle (ex: `numpy==1.26.4`), as salva em um arquivo de `constraints.txt` e instala as outras dependencias sem o parametro `-U` (Upgrade). Isso garante que o ambiente seja preparado rapidamente usando o cache do Kaggle e que as bibliotecas base nunca sejam alteradas. Ela instala `styletts2==0.1.6` com `--no-deps`.
-
-## Otimização de Idioma e Fidelidade de Áudio
-
-A biblioteca `styletts2==0.1.6` possui limitações técnicas que causavam áudio distorcido e sotaque estrangeiro. Implementamos três correções profundas:
-
-1.  **Sincronização de Dicionário**: O script agora localiza automaticamente o arquivo `phonemizer_config.txt` do seu treino e sincroniza o dicionário interno da biblioteca. Isso evita que os fonemas do português sejam rejeitados ou lidos como silêncio/ruído.
-2.  **Resolução Agressiva de Caminhos**: O carregamento dos modelos auxiliares (**F0**, **ASR** e **PLBERT**) foi blindado. O programa agora faz uma busca recursiva para garantir que os pesos que você treinou sejam usados, eliminando o erro de "Invalid F0 model path" e mantendo a sua entonação original.
-3.  **Monkey-Patch de Sotaque**: O fonemizador `Gruut` é forçado a usar o padrão **PT-BR** durante a inicialização, garantindo a pronúncia brasileira correta sem a necessidade de comandos manuais a cada frase.
-
-### Importante sobre GPU
-... (resto do arquivo)
-
-## Origem dos arquivos
-
-O modelo vem do Hugging Face:
+No estado auditado em 2026-06-10, o manifesto aponta para:
 
 ```text
-https://huggingface.co/warllem/Super_voz
+voices/v_minha_voz_f5_tts_ptbr/model/model_2000.pt
 ```
 
-Repositorio:
+Esse arquivo tem aproximadamente 5.39 GB e compartilha o mesmo objeto LFS com:
 
 ```text
-warllem/Super_voz
+voices/v_minha_voz_f5_tts_ptbr/model/latest_checkpoint.pt
 ```
 
-Destino no Kaggle:
+## Arquivos obrigatorios para inferencia
+
+Presentes:
 
 ```text
-/kaggle/working/Super_voz
+voices/v_minha_voz_f5_tts_ptbr/manifest.json
+voices/v_minha_voz_f5_tts_ptbr/model/model_2000.pt
+voices/v_minha_voz_f5_tts_ptbr/model/latest_checkpoint.pt
+voices/v_minha_voz_f5_tts_ptbr/model/model_last.pt
+voices/v_minha_voz_f5_tts_ptbr/model/vocab.txt
+voices/v_minha_voz_f5_tts_ptbr/data_reference/referencia_voz.wav
+libraries/f5_tts_ptbr_tharyck/setting.json
+libraries/f5_tts_ptbr_tharyck/vocab.txt
+libraries/f5_tts_ptbr_tharyck/model_last.safetensors
 ```
 
-Download seletivo (Otimizado):
-- Metadados e Utils primeiro.
-- Checkpoint selecionado individualmente (ex: `best_model.pth`).
-
-
-## Arquivos corretos
+Ausente:
 
 ```text
-model/config.yml
-model/best_metric.txt
-model/best_model.pth
-model/latest_checkpoint.pth
-model/latest_checkpoint.txt
-model/Utils/ASR/epoch_00080.pth
-model/Utils/JDC/bst.t7
-model/Utils/PLBERT/step_1000000.t7
-data_reference/referencia_voz.wav
-docs/train.log
+voices/v_minha_voz_f5_tts_ptbr/data_reference/referencia_voz.txt
 ```
 
-`model/best_metric.txt` informa:
+Como a transcricao exata da referencia nao esta publicada, o carregador registra o fato no diagnostico e permite que o F5-TTS use ASR automaticamente.
+
+## Arquitetura recuperada
+
+O manifesto informa:
 
 ```text
-source_checkpoint=epoch_2nd_00045.pth
-epoch=45
-validation_loss=0.268
+architecture: F5-TTS
+exp_name: F5TTS_v1_Base
+tokenizer: char
 ```
 
-O checkpoint principal usado e:
+O pacote nao publica um `model_config.json` completo. O carregador recupera a configuracao padrao `F5TTS_v1_Base` do runtime F5-TTS:
 
 ```text
-model/best_model.pth
+backbone: DiT
+dim: 1024
+depth: 22
+heads: 16
+ff_mult: 2
+text_dim: 512
+text_mask_padding: true
+conv_layers: 4
+target_sample_rate: 24000
+n_mel_channels: 100
+hop_length: 256
+win_length: 1024
+n_fft: 1024
+mel_spec_type: vocos
 ```
 
-## Audio de referencia
+## Arquivos para retomar ou reproduzir treinamento
 
-O audio esperado e:
+Presentes parcialmente:
 
-```text
-data_reference/referencia_voz.wav
-```
+- checkpoint da voz;
+- checkpoint-base da biblioteca PT-BR;
+- `setting.json` com parametros gerais de treinamento;
+- `duration.json`;
+- vocabulario.
 
-O codigo tambem procura logs com `.wav` e metricas. Se encontrar, pode escolher o melhor audio pelo score. Se nao encontrar, usa `referencia_voz.wav`.
+Ausentes ou nao publicados:
 
-## Saida
+- estado de otimizador;
+- scheduler;
+- scaler AMP;
+- seed;
+- commit exato do F5-TTS usado no fine-tuning;
+- versoes completas das dependencias;
+- dataset da voz personalizada;
+- `metadata.csv`, `raw.arrow` ou equivalente;
+- divisao train/validation;
+- logs e metricas completas.
 
-Audios gerados:
-
-```text
-/kaggle/working/audios_gerados
-```
-
-A celula de geracao mostra player e link `Download do WAV`.
+Esses itens nao bloqueiam inferencia, mas bloqueiam reproducao fiel ou retomada completa do treinamento.

@@ -1,5 +1,16 @@
 # Conversor de Voz Neural no Colab
 
+## Historico de Atualizacoes
+
+### 2026-06-10 - Kaggle F5-TTS
+
+- Adicionado fluxo Kaggle exclusivo para F5-TTS usando o repositorio `warllem/Super_voz` no Hugging Face.
+- Removida do fluxo Kaggle a logica antiga baseada em checkpoints StyleTTS2.
+- O carregador Kaggle agora le `voices/v_minha_voz_f5_tts_ptbr/manifest.json`, seleciona `model/model_2000.pt`, baixa apenas os artefatos necessarios e valida vocabulario, referencia, vocoder e arquitetura antes da inferencia.
+- O WAV de teste esperado no Kaggle e `/kaggle/working/resultado_voz.wav`.
+
+## Contexto original Colab
+
 Projeto criado para executar, no Google Colab, uma voz neural treinada a partir da pasta publica do Google Drive:
 
 `https://drive.google.com/drive/folders/13uBrrPLx--PlHho0fcz5xW8eYehimRcC?usp=sharing`

@@ -1,5 +1,35 @@
 # Conversa Sobre Voz Neural Portavel
 
+## Historico de Atualizacoes
+
+### 2026-06-10 - Mudanca para F5-TTS no Kaggle
+
+O projeto Kaggle foi atualizado para usar exclusivamente a voz F5-TTS publicada em:
+
+```txt
+https://huggingface.co/warllem/Super_voz
+```
+
+O pacote de voz atual fica em:
+
+```txt
+voices/v_minha_voz_f5_tts_ptbr/
+```
+
+O manifesto seleciona o checkpoint:
+
+```txt
+voices/v_minha_voz_f5_tts_ptbr/model/model_2000.pt
+```
+
+O fluxo Kaggle agora baixa apenas manifesto, vocabularios, referencia e o checkpoint escolhido, valida os artefatos e gera o WAV final em:
+
+```txt
+/kaggle/working/resultado_voz.wav
+```
+
+As secoes abaixo preservam o historico anterior de testes com StyleTTS2/Colab.
+
 ## Objetivo
 
 Criar uma forma de usar a voz neural masculina em portugues do Brasil, treinada com StyleTTS2, em diferentes produtos:
