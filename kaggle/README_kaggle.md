@@ -127,3 +127,5 @@ O modo `essential` evita estourar o disco do Kaggle: ele ignora `.tmp`, baixa ap
 Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo checkpoint, o mesmo vocabulario, `F5TTS_v1_Base`, vocoder `vocos`, sample rate de 24000 Hz e a referencia de audio/texto da voz treinada.
 
 Se a instalacao no Kaggle mostrar conflitos com `dask-cuda`, `cuml` ou `cudf`, trate como aviso do ambiente base. O erro que bloqueia a exportacao ONNX e falta de pacote como `onnxscript`; por isso ele esta listado no requirements.
+
+O exportador usa `torch.onnx.export(..., dynamo=False)` e formas estaticas para contornar o uso interno de `seq_len.max().item()` no F5-TTS, que quebra o exportador novo `torch.export`.

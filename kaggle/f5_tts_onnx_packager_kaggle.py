@@ -526,16 +526,9 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         str(onnx_path),
         input_names=["x", "cond", "text", "time", "mask"],
         output_names=["pred"],
-        dynamic_axes={
-            "x": {0: "batch", 1: "frames"},
-            "cond": {0: "batch", 1: "frames"},
-            "text": {0: "batch", 1: "text_tokens"},
-            "time": {0: "batch"},
-            "mask": {0: "batch", 1: "frames"},
-            "pred": {0: "batch", 1: "frames"},
-        },
-        opset_version=17,
+        opset_version=18,
         do_constant_folding=True,
+        dynamo=False,
     )
 
     report: dict[str, Any] = {
@@ -545,7 +538,9 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         "vocab": str(vocab_path),
         "device": device,
         "use_ema": use_ema,
-        "note": "Este ONNX contem o nucleo Transformer/DiT do F5-TTS. O pacote mantem os arquivos originais para inferencia Python completa.",
+        "export_mode": "legacy_static",
+        "static_shapes": {"batch": batch, "frames": frames, "text_tokens": text_tokens, "mel_channels": mel_channels},
+        "note": "Este ONNX contem o nucleo Transformer/DiT do F5-TTS com formas estaticas. O pacote mantem os arquivos originais para inferencia Python completa.",
     }
     validate_onnx(onnx_path, report)
     return report
