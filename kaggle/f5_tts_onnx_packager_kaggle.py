@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
+DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
 WORK_ROOT = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
 DOWNLOAD_DIR = WORK_ROOT / "voz_noslen_f5tts_snapshot"
 STAGING_DIR = WORK_ROOT / "voz_noslen_onnx_package"
@@ -98,6 +99,13 @@ def copy_tree(src: Path, dst: Path) -> None:
         shutil.rmtree(dst)
     ignore = shutil.ignore_patterns(".git", ".cache", "__pycache__", "*.tmp")
     shutil.copytree(src, dst, ignore=ignore)
+
+
+def move_tree(src: Path, dst: Path) -> None:
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
 
 
 def find_first(root: Path, patterns: tuple[str, ...]) -> Path | None:
@@ -191,12 +199,77 @@ def bucket_relative_path(file_url: str) -> Path:
     for marker in ("resolve", "raw", "blob"):
         if marker in parts:
             index = parts.index(marker)
-            if len(parts) > index + 2:
-                return Path(*parts[index + 2 :])
+            if len(parts) > index + 1:
+                remaining = parts[index + 1 :]
+                if remaining and remaining[0] in ("main", "refs", "resolve"):
+                    remaining = remaining[1:]
+                return Path(*remaining)
     if "buckets" in parts and len(parts) > parts.index("buckets") + 3:
         index = parts.index("buckets")
         return Path(*parts[index + 3 :])
     return Path(parts[-1])
+
+
+def is_tmp_or_partial(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith((".tmp", ".partial", ".incomplete"))
+
+
+def choose_bucket_checkpoint(relative_paths: list[Path], voice_dir: str) -> Path | None:
+    voice_prefix = Path(voice_dir)
+    preferred_names = (
+        "model/model_2000.pt",
+        "model/latest_checkpoint.pt",
+        "model/model_last.pt",
+        "model/model_last.safetensors",
+        "model/final_checkpoint.pt",
+    )
+    available = {path.as_posix(): path for path in relative_paths}
+    for name in preferred_names:
+        candidate = (voice_prefix / name).as_posix()
+        if candidate in available:
+            return available[candidate]
+
+    checkpoints = [
+        path
+        for path in relative_paths
+        if path.as_posix().startswith(f"{voice_dir.rstrip('/')}/model/")
+        and path.suffix.lower() in (".pt", ".safetensors")
+        and "base_checkpoint" not in path.name
+        and not is_tmp_or_partial(path)
+    ]
+    return sorted(checkpoints)[0] if checkpoints else None
+
+
+def filter_bucket_files(file_urls: set[str], voice_dir: str, download_mode: str) -> list[tuple[str, Path]]:
+    entries = [(url, bucket_relative_path(url)) for url in file_urls]
+    entries = [(url, path) for url, path in entries if not is_tmp_or_partial(path)]
+    if download_mode == "all":
+        return sorted(entries, key=lambda item: item[1].as_posix())
+
+    relative_paths = [path for _, path in entries]
+    checkpoint = choose_bucket_checkpoint(relative_paths, voice_dir)
+    if checkpoint is None:
+        raise RuntimeError(f"Nenhum checkpoint principal encontrado em {voice_dir}/model.")
+
+    wanted: set[str] = {checkpoint.as_posix()}
+    voice_prefix = voice_dir.rstrip("/")
+    for _, path in entries:
+        path_text = path.as_posix()
+        if path_text == ".gitattributes":
+            wanted.add(path_text)
+        if path_text.startswith(f"{voice_prefix}/"):
+            if path_text.endswith((".md", ".json", ".txt", ".wav")):
+                wanted.add(path_text)
+            if path_text == f"{voice_prefix}/model/vocab.txt":
+                wanted.add(path_text)
+        if path_text.startswith("libraries/"):
+            if path_text.endswith((".md", ".json", ".txt", ".wav")):
+                wanted.add(path_text)
+
+    LOGGER.info("Modo essential: checkpoint escolhido para download: %s", checkpoint.as_posix())
+    LOGGER.info("Modo essential: %s arquivo(s) selecionado(s), checkpoints duplicados e .tmp ignorados.", len(wanted))
+    return sorted((url, path) for url, path in entries if path.as_posix() in wanted)
 
 
 def download_http_file(url: str, output_path: Path, token: str | None) -> None:
@@ -212,7 +285,7 @@ def download_http_file(url: str, output_path: Path, token: str | None) -> None:
                     handle.write(chunk)
 
 
-def download_bucket_source(source_url: str, token: str | None) -> Path:
+def download_bucket_source(source_url: str, token: str | None, voice_dir: str, download_mode: str) -> Path:
     import re
     import requests
 
@@ -251,8 +324,8 @@ def download_bucket_source(source_url: str, token: str | None) -> Path:
             f"Origem recebida: {source_url}"
         )
 
-    for url in sorted(file_urls):
-        relative = bucket_relative_path(url)
+    selected_files = filter_bucket_files(file_urls, voice_dir, download_mode)
+    for url, relative in selected_files:
         output_path = DOWNLOAD_DIR / relative
         LOGGER.info("Baixando bucket: %s -> %s", url, output_path)
         download_http_file(url, output_path, token)
@@ -285,11 +358,18 @@ def download_source_repo(repo_id: str, revision: str, token: str | None) -> Path
     return DOWNLOAD_DIR
 
 
-def download_source(source: str, repo_id: str | None, revision: str, token: str | None) -> tuple[Path, str]:
+def download_source(
+    source: str,
+    repo_id: str | None,
+    revision: str,
+    token: str | None,
+    voice_dir: str,
+    download_mode: str,
+) -> tuple[Path, str]:
     if repo_id:
         return download_source_repo(repo_id, revision, token), repo_id
     if is_bucket_url(source):
-        return download_bucket_source(source, token), source
+        return download_bucket_source(source, token, voice_dir, download_mode), source
     resolved_repo_id = repo_id_from_url_or_id(source)
     return download_source_repo(resolved_repo_id, revision, token), resolved_repo_id
 
@@ -527,9 +607,9 @@ def package_voice(args: argparse.Namespace) -> None:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     hf_folder = args.hf_folder or f"onnx_packages/voz_noslen_f5tts_onnx_{timestamp}"
 
-    source, source_label = download_source(args.source, args.repo_id, revision, token)
+    source, source_label = download_source(args.source, args.repo_id, revision, token, args.voice_dir, args.download_mode)
     paths = make_package_paths()
-    copy_tree(source, paths.copied_training_dir)
+    move_tree(source, paths.copied_training_dir)
 
     manifest_path = find_manifest(paths.copied_training_dir)
     manifest = load_json_if_exists(manifest_path)
@@ -590,6 +670,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--source", default=os.environ.get("HF_SOURCE_URL", DEFAULT_SOURCE_URL), help="URL ou repo_id do Hugging Face.")
     parser.add_argument("--repo-id", default=os.environ.get("HF_SOURCE_REPO_ID"), help="Repo ID explicito, ex: warllem/Voz_Noslen.")
     parser.add_argument("--upload-repo-id", default=os.environ.get("HF_UPLOAD_REPO_ID"), help="Model Repo onde a pasta nova sera enviada.")
+    parser.add_argument("--voice-dir", default=os.environ.get("HF_VOICE_DIR", DEFAULT_VOICE_DIR), help="Pasta da voz dentro do bucket/repo.")
+    parser.add_argument(
+        "--download-mode",
+        choices=("essential", "all"),
+        default=os.environ.get("HF_DOWNLOAD_MODE", "essential"),
+        help="essential baixa apenas a voz escolhida e evita checkpoints duplicados; all tenta baixar tudo.",
+    )
     parser.add_argument("--revision", default=os.environ.get("HF_REVISION", DEFAULT_REVISION))
     parser.add_argument("--hf-folder", default=os.environ.get("HF_TARGET_FOLDER"), help="Nova pasta dentro do repo Hugging Face.")
     parser.add_argument("--upload", action="store_true", default=os.environ.get("HF_UPLOAD", "1") == "1")

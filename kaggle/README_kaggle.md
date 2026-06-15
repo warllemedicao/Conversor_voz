@@ -105,6 +105,8 @@ No Kaggle:
 pip install -r /kaggle/input/seu-projeto/conversor_voz_requirements_kaggle.txt
 python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
   --source https://huggingface.co/buckets/warllem/Voz_Noslen \
+  --voice-dir voices/v_minha_voz_f5_tts_ptbr \
+  --download-mode essential \
   --upload-repo-id warllem/Voz_Noslen_ONNX
 ```
 
@@ -115,5 +117,11 @@ Para testar sem enviar ao Hugging Face:
 ```bash
 python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
   --source https://huggingface.co/buckets/warllem/Voz_Noslen \
+  --voice-dir voices/v_minha_voz_f5_tts_ptbr \
+  --download-mode essential \
   --no-upload
 ```
+
+O modo `essential` evita estourar o disco do Kaggle: ele ignora `.tmp`, baixa apenas a voz escolhida, preserva o `manifest.json`, `vocab.txt`, audio de referencia, docs/configs pequenas e um checkpoint principal. Use `--download-mode all` somente em um ambiente com disco suficiente.
+
+Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo checkpoint, o mesmo vocabulario, `F5TTS_v1_Base`, vocoder `vocos`, sample rate de 24000 Hz e a referencia de audio/texto da voz treinada.
