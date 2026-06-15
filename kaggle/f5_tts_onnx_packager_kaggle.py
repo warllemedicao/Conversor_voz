@@ -166,10 +166,17 @@ def find_vocab(root: Path, checkpoint_path: Path) -> Path:
     return vocab
 
 
-def find_reference_audio(root: Path) -> Path | None:
+def find_reference_audio(root: Path, voice_dir: str) -> Path | None:
+    voice_ref = root / voice_dir / "data_reference" / "referencia_voz.wav"
+    if voice_ref.is_file():
+        return voice_ref
+    voice_refs = sorted(path for path in (root / voice_dir / "data_reference").glob("*.wav") if path.is_file())
+    if voice_refs:
+        return voice_refs[0]
     return find_first(
         root,
         (
+            "voices/*/data_reference/referencia_voz.wav",
             "voices/*/data_reference/*.wav",
             "**/referencia*.wav",
             "**/reference*.wav",
@@ -462,6 +469,14 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
     from f5_tts.infer.utils_infer import load_model
     from hydra.utils import get_class
 
+    try:
+        import onnxscript  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "Dependencia ausente: onnxscript. Rode novamente a celula 2 do notebook atualizado "
+            "ou execute: pip install onnxscript"
+        ) from exc
+
     config = build_default_f5_config(manifest)
     model_cls = get_class(f"f5_tts.model.{config['backbone']}")
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -615,7 +630,7 @@ def package_voice(args: argparse.Namespace) -> None:
     manifest = load_json_if_exists(manifest_path)
     checkpoint_path = find_checkpoint(paths.copied_training_dir, manifest, manifest_path)
     vocab_path = find_vocab(paths.copied_training_dir, checkpoint_path)
-    reference_audio_path = find_reference_audio(paths.copied_training_dir)
+    reference_audio_path = find_reference_audio(paths.copied_training_dir, args.voice_dir)
 
     LOGGER.info("Checkpoint escolhido: %s", checkpoint_path)
     LOGGER.info("Vocab escolhido: %s", vocab_path)

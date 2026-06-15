@@ -125,3 +125,5 @@ python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
 O modo `essential` evita estourar o disco do Kaggle: ele ignora `.tmp`, baixa apenas a voz escolhida, preserva o `manifest.json`, `vocab.txt`, audio de referencia, docs/configs pequenas e um checkpoint principal. Use `--download-mode all` somente em um ambiente com disco suficiente.
 
 Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo checkpoint, o mesmo vocabulario, `F5TTS_v1_Base`, vocoder `vocos`, sample rate de 24000 Hz e a referencia de audio/texto da voz treinada.
+
+Se a instalacao no Kaggle mostrar conflitos com `dask-cuda`, `cuml` ou `cudf`, trate como aviso do ambiente base. O erro que bloqueia a exportacao ONNX e falta de pacote como `onnxscript`; por isso ele esta listado no requirements.
