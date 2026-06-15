@@ -103,7 +103,9 @@ No Kaggle:
 
 ```bash
 pip install -r /kaggle/input/seu-projeto/conversor_voz_requirements_kaggle.txt
-python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py --repo-id warllem/Voz_Noslen
+python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
+  --source https://huggingface.co/buckets/warllem/Voz_Noslen \
+  --upload-repo-id warllem/Voz_Noslen_ONNX
 ```
 
 Se o repo exigir permissao de escrita, crie um Kaggle Secret chamado `HF_TOKEN`.
@@ -111,5 +113,7 @@ Se o repo exigir permissao de escrita, crie um Kaggle Secret chamado `HF_TOKEN`.
 Para testar sem enviar ao Hugging Face:
 
 ```bash
-python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py --repo-id warllem/Voz_Noslen --no-upload
+python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
+  --source https://huggingface.co/buckets/warllem/Voz_Noslen \
+  --no-upload
 ```

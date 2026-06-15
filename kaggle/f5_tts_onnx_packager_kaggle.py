@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
@@ -176,6 +176,90 @@ def load_json_if_exists(path: Path | None) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def is_bucket_url(value: str) -> bool:
+    return value.startswith(("http://", "https://")) and "/buckets/" in urlparse(value).path
+
+
+def strip_url_query(value: str) -> str:
+    parts = urlsplit(value)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def bucket_relative_path(file_url: str) -> Path:
+    parsed = urlparse(strip_url_query(file_url))
+    parts = [part for part in parsed.path.split("/") if part]
+    for marker in ("resolve", "raw", "blob"):
+        if marker in parts:
+            index = parts.index(marker)
+            if len(parts) > index + 2:
+                return Path(*parts[index + 2 :])
+    if "buckets" in parts and len(parts) > parts.index("buckets") + 3:
+        index = parts.index("buckets")
+        return Path(*parts[index + 3 :])
+    return Path(parts[-1])
+
+
+def download_http_file(url: str, output_path: Path, token: str | None) -> None:
+    import requests
+
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(url, headers=headers, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        with output_path.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+
+
+def download_bucket_source(source_url: str, token: str | None) -> Path:
+    import re
+    import requests
+
+    clean_dir(DOWNLOAD_DIR)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    source_url = source_url.rstrip("/")
+    pages = [source_url, f"{source_url}/tree/main"]
+    seen_pages: set[str] = set()
+    file_urls: set[str] = set()
+
+    LOGGER.info("Origem parece ser Hugging Face Buckets; tentando listar links HTML em %s", source_url)
+    while pages:
+        page_url = pages.pop(0)
+        if page_url in seen_pages:
+            continue
+        seen_pages.add(page_url)
+        response = requests.get(page_url, headers=headers, timeout=60)
+        if response.status_code == 404:
+            continue
+        response.raise_for_status()
+
+        for href in re.findall(r'href=["\']([^"\']+)["\']', response.text):
+            absolute = strip_url_query(urljoin(page_url, href))
+            parsed = urlparse(absolute)
+            if parsed.netloc != urlparse(source_url).netloc:
+                continue
+            if "/tree/" in parsed.path and "/buckets/" in parsed.path and absolute not in seen_pages:
+                pages.append(absolute)
+            if any(marker in parsed.path for marker in ("/resolve/", "/raw/", "/blob/")) and "/buckets/" in parsed.path:
+                file_urls.add(absolute.replace("/blob/", "/resolve/").replace("/raw/", "/resolve/"))
+
+    if not file_urls:
+        raise RuntimeError(
+            "Nao consegui listar arquivos do link /buckets/. Esse endereco nao e um Model Repo padrao do Hugging Face. "
+            "Abra o bucket no navegador, copie os arquivos para um Model Repo normal ou informe o repo_id correto em --repo-id. "
+            f"Origem recebida: {source_url}"
+        )
+
+    for url in sorted(file_urls):
+        relative = bucket_relative_path(url)
+        output_path = DOWNLOAD_DIR / relative
+        LOGGER.info("Baixando bucket: %s -> %s", url, output_path)
+        download_http_file(url, output_path, token)
+
+    return DOWNLOAD_DIR
+
+
 def download_source_repo(repo_id: str, revision: str, token: str | None) -> Path:
     from huggingface_hub import snapshot_download
 
@@ -199,6 +283,15 @@ def download_source_repo(repo_id: str, revision: str, token: str | None) -> Path
             token=token,
         )
     return DOWNLOAD_DIR
+
+
+def download_source(source: str, repo_id: str | None, revision: str, token: str | None) -> tuple[Path, str]:
+    if repo_id:
+        return download_source_repo(repo_id, revision, token), repo_id
+    if is_bucket_url(source):
+        return download_bucket_source(source, token), source
+    resolved_repo_id = repo_id_from_url_or_id(source)
+    return download_source_repo(resolved_repo_id, revision, token), resolved_repo_id
 
 
 def make_package_paths() -> PackagePaths:
@@ -415,6 +508,7 @@ def upload_package(paths: PackagePaths, repo_id: str, revision: str, hf_folder: 
     if not token:
         raise RuntimeError("HF_TOKEN ausente. Crie um Kaggle Secret chamado HF_TOKEN para enviar ao Hugging Face.")
     api = HfApi(token=token)
+    api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
     LOGGER.info("Enviando pacote para %s/%s", repo_id, hf_folder)
     api.upload_folder(
         repo_id=repo_id,
@@ -428,12 +522,12 @@ def upload_package(paths: PackagePaths, repo_id: str, revision: str, hf_folder: 
 
 def package_voice(args: argparse.Namespace) -> None:
     token = get_hf_token()
-    repo_id = args.repo_id or repo_id_from_url_or_id(args.source)
+    upload_repo_id = args.upload_repo_id or args.repo_id
     revision = args.revision
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     hf_folder = args.hf_folder or f"onnx_packages/voz_noslen_f5tts_onnx_{timestamp}"
 
-    source = download_source_repo(repo_id, revision, token)
+    source, source_label = download_source(args.source, args.repo_id, revision, token)
     paths = make_package_paths()
     copy_tree(source, paths.copied_training_dir)
 
@@ -466,7 +560,7 @@ def package_voice(args: argparse.Namespace) -> None:
     paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
     write_package_metadata(
         paths,
-        repo_id,
+        source_label,
         revision,
         hf_folder,
         checkpoint_path,
@@ -478,7 +572,12 @@ def package_voice(args: argparse.Namespace) -> None:
     )
 
     if args.upload:
-        upload_package(paths, repo_id, revision, hf_folder, token)
+        if not upload_repo_id:
+            raise RuntimeError(
+                "Para fazer upload, informe --upload-repo-id com o Model Repo de destino. "
+                "Buckets nao aceitam upload via HfApi.upload_folder."
+            )
+        upload_package(paths, upload_repo_id, revision, hf_folder, token)
     else:
         LOGGER.info("Upload desativado. Pacote local pronto em %s", paths.staging_root)
 
@@ -490,6 +589,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Empacota uma voz F5-TTS em um pacote ONNX no Kaggle.")
     parser.add_argument("--source", default=os.environ.get("HF_SOURCE_URL", DEFAULT_SOURCE_URL), help="URL ou repo_id do Hugging Face.")
     parser.add_argument("--repo-id", default=os.environ.get("HF_SOURCE_REPO_ID"), help="Repo ID explicito, ex: warllem/Voz_Noslen.")
+    parser.add_argument("--upload-repo-id", default=os.environ.get("HF_UPLOAD_REPO_ID"), help="Model Repo onde a pasta nova sera enviada.")
     parser.add_argument("--revision", default=os.environ.get("HF_REVISION", DEFAULT_REVISION))
     parser.add_argument("--hf-folder", default=os.environ.get("HF_TARGET_FOLDER"), help="Nova pasta dentro do repo Hugging Face.")
     parser.add_argument("--upload", action="store_true", default=os.environ.get("HF_UPLOAD", "1") == "1")
