@@ -128,4 +128,4 @@ Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo chec
 
 Se a instalacao no Kaggle mostrar conflitos com `dask-cuda`, `cuml` ou `cudf`, trate como aviso do ambiente base. O erro que bloqueia a exportacao ONNX e falta de pacote como `onnxscript`; por isso ele esta listado no requirements.
 
-O exportador usa `torch.onnx.export(..., dynamo=False)` e formas estaticas para contornar o uso interno de `seq_len.max().item()` no F5-TTS, que quebra o exportador novo `torch.export`.
+O exportador tenta primeiro o caminho legado `torch.onnx.utils.export`, depois `torch.onnx.export(..., dynamo=False)` e, por ultimo, `torch.jit.trace` seguido de exportacao ONNX. As entradas flutuantes do wrapper sao convertidas para o dtype real dos pesos do modelo para evitar erro `mat1 and mat2 must have the same dtype, but got Float and Half` quando o checkpoint carregar em FP16.

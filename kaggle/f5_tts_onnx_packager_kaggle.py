@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
-PACKAGER_VERSION = "2026.06.15.5"
+PACKAGER_VERSION = "2026.06.15.6"
 WORK_ROOT = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
 DOWNLOAD_DIR = WORK_ROOT / "voz_noslen_f5tts_snapshot"
 STAGING_DIR = WORK_ROOT / "voz_noslen_onnx_package"
@@ -431,17 +431,38 @@ def build_default_f5_config(manifest: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def infer_module_float_dtype(module: Any) -> Any:
+    import torch
+
+    for parameter in module.parameters():
+        if parameter.is_floating_point():
+            return parameter.dtype
+    for buffer in module.buffers():
+        if buffer.is_floating_point():
+            return buffer.dtype
+    return torch.float32
+
+
 class F5TransformerOnnxWrapper:
-    def __init__(self, model: Any) -> None:
+    def __init__(self, model: Any, compute_dtype: Any) -> None:
         import torch
 
         class Wrapper(torch.nn.Module):
-            def __init__(self, inner_model: Any) -> None:
+            def __init__(self, inner_model: Any, dtype: Any) -> None:
                 super().__init__()
                 self.inner_model = inner_model
                 self.transformer = getattr(inner_model, "transformer", inner_model)
+                self.compute_dtype = dtype
+
+            def _cast_float_input(self, value):
+                if torch.is_tensor(value) and value.is_floating_point() and value.dtype != self.compute_dtype:
+                    return value.to(dtype=self.compute_dtype)
+                return value
 
             def forward(self, x, cond, text, time, mask):
+                x = self._cast_float_input(x)
+                cond = self._cast_float_input(cond)
+                time = self._cast_float_input(time)
                 try:
                     return self.transformer(
                         x=x,
@@ -463,7 +484,7 @@ class F5TransformerOnnxWrapper:
                         drop_text=False,
                     )
 
-        self.module = Wrapper(model)
+        self.module = Wrapper(model, compute_dtype)
 
 
 def kwargs_supported_by(function: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -587,7 +608,9 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         )
         use_ema = False
     model.eval()
-    wrapped = F5TransformerOnnxWrapper(model).module.to(device).eval()
+    model_compute_dtype = infer_module_float_dtype(model)
+    LOGGER.info("Dtype de ponto flutuante do modelo: %s", model_compute_dtype)
+    wrapped = F5TransformerOnnxWrapper(model, model_compute_dtype).module.to(device).eval()
 
     batch = 1
     frames = 64
@@ -616,6 +639,7 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         "vocab": str(vocab_path),
         "device": device,
         "use_ema": use_ema,
+        "model_compute_dtype": str(model_compute_dtype),
         "export_mode": "legacy_static",
         "export_method": export_method,
         "static_shapes": {"batch": batch, "frames": frames, "text_tokens": text_tokens, "mel_channels": mel_channels},

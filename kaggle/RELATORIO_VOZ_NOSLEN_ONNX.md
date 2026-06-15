@@ -172,6 +172,34 @@ Correcao atual:
   3. `torch.jit.trace(..., strict=False)` seguido de `torch.onnx.export`.
 - O relatorio `onnx_export_report.json` registra `export_method` para mostrar qual caminho funcionou.
 
+## Erro 6: dtype Float contra Half no exportador
+
+Erro:
+
+```text
+RuntimeError: mat1 and mat2 must have the same dtype, but got Float and Half
+```
+
+Contexto observado no Kaggle:
+
+```text
+vocab :  /kaggle/working/voz_noslen_onnx_package/f5_tts_original/voices/v_minha_voz_f5_tts_ptbr/model/vocab.txt
+token :  custom
+model :  /kaggle/working/voz_noslen_onnx_package/f5_tts_original/voices/v_minha_voz_f5_tts_ptbr/model/model_2000.pt
+```
+
+Causa:
+
+O checkpoint foi carregado com pesos em `float16` (`Half`), mas os tensores de exemplo usados para exportar o ONNX (`x`, `cond` e possivelmente `time`) eram criados em `float32` (`Float`). Durante uma camada `Linear`, o PyTorch recebeu entrada `Float` e peso `Half`, o que interrompeu a exportacao antes de gerar o ONNX.
+
+Correcao aplicada:
+
+- Atualizado `PACKAGER_VERSION` para `2026.06.15.6`.
+- Criada funcao `infer_module_float_dtype` para detectar o dtype real dos pesos/buffers do modelo carregado.
+- O wrapper ONNX agora converte entradas flutuantes (`x`, `cond`, `time`) para o dtype do modelo antes de chamar o Transformer.
+- `text` continua inteiro e `mask` continua booleano, preservando os tipos esperados pelo F5-TTS.
+- O relatorio `onnx_export_report.json` agora registra `model_compute_dtype`.
+
 ## Sobre qualidade de audio
 
 Para preservar qualidade:
@@ -204,7 +232,7 @@ Por isso o pacote final preserva os arquivos originais para permitir inferencia 
 Ao rodar a celula 5, o log deve mostrar:
 
 ```text
-Voz_Noslen ONNX packager versao: 2026.06.15.5
+Voz_Noslen ONNX packager versao: 2026.06.15.6
 ```
 
 Se essa linha nao aparecer, o notebook/script antigo ainda esta sendo executado. Nesse caso, rode novamente desde a celula 1 ou reimporte o notebook atualizado.
