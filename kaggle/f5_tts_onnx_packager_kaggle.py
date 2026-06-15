@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
+PACKAGER_VERSION = "2026.06.15.5"
 WORK_ROOT = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
 DOWNLOAD_DIR = WORK_ROOT / "voz_noslen_f5tts_snapshot"
 STAGING_DIR = WORK_ROOT / "voz_noslen_onnx_package"
@@ -464,6 +466,84 @@ class F5TransformerOnnxWrapper:
         self.module = Wrapper(model)
 
 
+def kwargs_supported_by(function: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return kwargs
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key in signature.parameters}
+
+
+def legacy_onnx_export(
+    model: Any,
+    sample_inputs: tuple[Any, ...],
+    onnx_path: Path,
+    input_names: list[str],
+    output_names: list[str],
+) -> str:
+    import torch
+
+    common_kwargs = {
+        "input_names": input_names,
+        "output_names": output_names,
+        "opset_version": 18,
+        "do_constant_folding": True,
+    }
+
+    try:
+        from torch.onnx import utils as onnx_utils
+
+        LOGGER.info("Tentando exportacao ONNX pelo caminho legado torch.onnx.utils.export.")
+        legacy_kwargs = {
+            **common_kwargs,
+            "use_external_data_format": True,
+        }
+        onnx_utils.export(
+            model,
+            sample_inputs,
+            str(onnx_path),
+            **kwargs_supported_by(onnx_utils.export, legacy_kwargs),
+        )
+        return "torch.onnx.utils.export"
+    except Exception as exc:
+        LOGGER.warning("Falha no caminho legado direto: %s: %s", type(exc).__name__, exc)
+
+    try:
+        LOGGER.info("Tentando exportacao ONNX por torch.onnx.export com dynamo=False.")
+        export_kwargs = {
+            **common_kwargs,
+            "dynamo": False,
+            "external_data": True,
+        }
+        torch.onnx.export(
+            model,
+            sample_inputs,
+            str(onnx_path),
+            **kwargs_supported_by(torch.onnx.export, export_kwargs),
+        )
+        return "torch.onnx.export_dynamo_false"
+    except Exception as exc:
+        LOGGER.warning("Falha em torch.onnx.export com dynamo=False: %s: %s", type(exc).__name__, exc)
+
+    LOGGER.info("Tentando torch.jit.trace antes da exportacao ONNX.")
+    traced = torch.jit.trace(model, sample_inputs, strict=False)
+    traced.eval()
+    export_kwargs = {
+        **common_kwargs,
+        "dynamo": False,
+        "external_data": True,
+    }
+    torch.onnx.export(
+        traced,
+        sample_inputs,
+        str(onnx_path),
+        **kwargs_supported_by(torch.onnx.export, export_kwargs),
+    )
+    return "torch.jit.trace_then_torch.onnx.export"
+
+
 def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Path, manifest: dict[str, Any] | None) -> dict[str, Any]:
     import torch
     from f5_tts.infer.utils_infer import load_model
@@ -520,25 +600,24 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
     mask = torch.ones(batch, frames, dtype=torch.bool, device=device)
 
     LOGGER.info("Exportando nucleo Transformer para %s", onnx_path)
-    torch.onnx.export(
+    export_method = legacy_onnx_export(
         wrapped,
         (x, cond, text, time, mask),
-        str(onnx_path),
-        input_names=["x", "cond", "text", "time", "mask"],
-        output_names=["pred"],
-        opset_version=18,
-        do_constant_folding=True,
-        dynamo=False,
+        onnx_path,
+        ["x", "cond", "text", "time", "mask"],
+        ["pred"],
     )
 
     report: dict[str, Any] = {
         "status": "ok",
+        "packager_version": PACKAGER_VERSION,
         "onnx_file": str(onnx_path),
         "checkpoint": str(checkpoint_path),
         "vocab": str(vocab_path),
         "device": device,
         "use_ema": use_ema,
         "export_mode": "legacy_static",
+        "export_method": export_method,
         "static_shapes": {"batch": batch, "frames": frames, "text_tokens": text_tokens, "mel_channels": mel_channels},
         "note": "Este ONNX contem o nucleo Transformer/DiT do F5-TTS com formas estaticas. O pacote mantem os arquivos originais para inferencia Python completa.",
     }
@@ -611,6 +690,7 @@ def upload_package(paths: PackagePaths, repo_id: str, revision: str, hf_folder: 
 
 
 def package_voice(args: argparse.Namespace) -> None:
+    LOGGER.info("Voz_Noslen ONNX packager versao: %s", PACKAGER_VERSION)
     token = get_hf_token()
     upload_repo_id = args.upload_repo_id or args.repo_id
     revision = args.revision
@@ -637,6 +717,7 @@ def package_voice(args: argparse.Namespace) -> None:
     except Exception as exc:
         export_report = {
             "status": "failed",
+            "packager_version": PACKAGER_VERSION,
             "error_type": type(exc).__name__,
             "error": str(exc),
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
