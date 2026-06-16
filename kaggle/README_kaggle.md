@@ -89,11 +89,27 @@ Inferencia pronta
 
 O pacote remoto nao contem um `.txt` ao lado de `referencia_voz.wav`. Nesse caso, a inferencia deixa o F5-TTS transcrever a referencia automaticamente com ASR.
 
-## Empacotar Voz_Noslen em ONNX
+## Empacotar Voz_Noslen em ONNX/Lite
 
-Use `f5_tts_onnx_packager_kaggle.py` quando quiser criar uma copia empacotada da voz F5-TTS com um arquivo ONNX experimental do nucleo Transformer/DiT.
+Use `f5_tts_onnx_packager_kaggle.py` para criar um pacote versionado da voz F5-TTS em `warllem/Voz_Noslen_ONNX`.
 
-O script nao altera os arquivos remotos existentes. Ele baixa o repositorio para o worker do Kaggle, copia tudo para `/kaggle/working/voz_noslen_onnx_package/f5_tts_original`, exporta o ONNX para `/kaggle/working/voz_noslen_onnx_package/onnx` e envia o pacote para uma pasta nova do Hugging Face, por padrao:
+O script nao altera os arquivos remotos existentes da voz original. Ele baixa somente os arquivos necessarios, copia a origem para `/kaggle/working/voz_noslen_onnx_package/f5_tts_original`, cria caminhos simples para runtime em `model/` e `reference/`, exporta um ONNX do nucleo Transformer/DiT para `onnx/`, cria `manifest.json`, `onnx_export_report.json`, `package_metadata.json` e adiciona `scripts/test_package_cpu.py`.
+
+O caminho recomendado e rodar o notebook:
+
+```text
+kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb
+```
+
+Esse notebook:
+
+- embute a versao atual do empacotador no worker `/kaggle/working`;
+- usa caches gravaveis para `numba` e `matplotlib`;
+- evita reinstalar `torch/torchaudio` se o Kaggle ja tiver PyTorch;
+- inclui uma celula opcional de keep-alive/heartbeat do navegador;
+- executa o empacotamento com logs periodicos durante celulas longas.
+
+A pasta de destino padrao e:
 
 ```text
 onnx_packages/voz_noslen_f5tts_onnx_<data_hora>
@@ -122,6 +138,24 @@ python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
   --no-upload
 ```
 
+O teste CPU roda por padrao antes do upload. Ele valida o ONNX com `onnxruntime` e gera um WAV com a frase:
+
+```text
+Boa noite Warllem, este é um teste do modo lite em CPU.
+```
+
+Comando gerado dentro do pacote:
+
+```bash
+python scripts/test_package_cpu.py \
+  --text "Boa noite Warllem, este é um teste do modo lite em CPU." \
+  --output-wav test_outputs/voz_noslen_lite_cpu.wav \
+  --nfe-step 4 \
+  --speed 1.0
+```
+
+Use `--skip-cpu-test` somente para diagnostico. Para publicacao final, deixe o teste passar; caso contrario o pacote nao deve ser considerado validado.
+
 O modo `essential` evita estourar o disco do Kaggle: ele ignora `.tmp`, baixa apenas a voz escolhida, preserva o `manifest.json`, `vocab.txt`, audio de referencia, docs/configs pequenas e um checkpoint principal. Use `--download-mode all` somente em um ambiente com disco suficiente.
 
 Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo checkpoint, o mesmo vocabulario, `F5TTS_v1_Base`, vocoder `vocos`, sample rate de 24000 Hz e a referencia de audio/texto da voz treinada.
@@ -129,3 +163,5 @@ Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo chec
 Se a instalacao no Kaggle mostrar conflitos com `dask-cuda`, `cuml` ou `cudf`, trate como aviso do ambiente base. O erro que bloqueia a exportacao ONNX e falta de pacote como `onnxscript`; por isso ele esta listado no requirements.
 
 O exportador tenta primeiro o caminho legado `torch.onnx.utils.export`, depois `torch.onnx.export(..., dynamo=False)` e, por ultimo, `torch.jit.trace` seguido de exportacao ONNX. As entradas flutuantes do wrapper sao convertidas para o dtype real dos pesos do modelo para evitar erro `mat1 and mat2 must have the same dtype, but got Float and Half` quando o checkpoint carregar em FP16.
+
+Limitacao importante: o ONNX exportado continua sendo apenas o nucleo DiT/Transformer, com entradas de baixo nivel como `x`, `cond`, `text`, `time` e `mask`. O F5-TTS completo exige tokenizacao/preprocessamento, condicionamento por audio de referencia, loop iterativo de flow matching, vocoder e escrita WAV. Por isso o pacote documenta um pipeline parcial: `onnxruntime` valida o nucleo ONNX, mas a geracao texto->WAV usa runtime Python `f5-tts` + `vocos` em CPU.

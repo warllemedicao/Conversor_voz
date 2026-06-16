@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
+import textwrap
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,8 +20,24 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
-PACKAGER_VERSION = "2026.06.15.6"
-WORK_ROOT = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
+PACKAGER_VERSION = "2026.06.16.1"
+DEFAULT_TEST_TEXT = "Boa noite Warllem, este é um teste do modo lite em CPU."
+
+
+def resolve_work_root() -> Path:
+    configured = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
+    try:
+        configured.mkdir(parents=True, exist_ok=True)
+        return configured
+    except OSError:
+        fallback = Path(os.environ.get("TMPDIR", "/tmp")) / "voz_noslen_onnx_working"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+WORK_ROOT = resolve_work_root()
+os.environ.setdefault("NUMBA_CACHE_DIR", str(WORK_ROOT / "numba_cache"))
+os.environ.setdefault("MPLCONFIGDIR", str(WORK_ROOT / "matplotlib_cache"))
 DOWNLOAD_DIR = WORK_ROOT / "voz_noslen_f5tts_snapshot"
 STAGING_DIR = WORK_ROOT / "voz_noslen_onnx_package"
 LOG_PATH = WORK_ROOT / "voz_noslen_onnx_packager.log"
@@ -31,6 +49,8 @@ class PackagePaths:
     staging_root: Path
     copied_training_dir: Path
     onnx_dir: Path
+    scripts_dir: Path
+    root_manifest_path: Path
     metadata_path: Path
     export_report_path: Path
 
@@ -101,6 +121,18 @@ def copy_tree(src: Path, dst: Path) -> None:
         shutil.rmtree(dst)
     ignore = shutil.ignore_patterns(".git", ".cache", "__pycache__", "*.tmp")
     shutil.copytree(src, dst, ignore=ignore)
+
+
+def link_or_copy_file(src: Path, dst: Path) -> str:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+        return "hardlink"
+    except OSError:
+        shutil.copy2(src, dst)
+        return "copy"
 
 
 def move_tree(src: Path, dst: Path) -> None:
@@ -191,6 +223,102 @@ def load_json_if_exists(path: Path | None) -> dict[str, Any] | None:
     if not path or not path.is_file():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def extract_reference_text(manifest: dict[str, Any] | None, manifest_path: Path | None, reference_audio_path: Path | None) -> str | None:
+    if manifest:
+        for key in (
+            "reference_text",
+            "ref_text",
+            "transcript",
+            "reference_transcript",
+            "data_reference_text",
+            "prompt_text",
+        ):
+            value = manifest.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for key in ("reference", "data_reference", "speaker_reference"):
+            value = manifest.get(key)
+            if isinstance(value, dict):
+                for nested_key in ("text", "transcript", "ref_text"):
+                    nested_value = value.get(nested_key)
+                    if isinstance(nested_value, str) and nested_value.strip():
+                        return nested_value.strip()
+
+    candidates: list[Path] = []
+    if reference_audio_path:
+        candidates.extend(
+            [
+                reference_audio_path.with_suffix(".txt"),
+                reference_audio_path.parent / "referencia_voz.txt",
+                reference_audio_path.parent / "reference_text.txt",
+                reference_audio_path.parent / "ref_text.txt",
+                reference_audio_path.parent / "transcript.txt",
+            ]
+        )
+    if manifest_path:
+        candidates.extend(
+            [
+                manifest_path.parent / "reference_text.txt",
+                manifest_path.parent / "ref_text.txt",
+                manifest_path.parent / "transcript.txt",
+            ]
+        )
+    for candidate in candidates:
+        if candidate.is_file():
+            text = candidate.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    return None
+
+
+def copy_required_runtime_files(
+    paths: PackagePaths,
+    checkpoint_path: Path,
+    vocab_path: Path,
+    reference_audio_path: Path | None,
+    reference_text: str | None,
+) -> dict[str, Any]:
+    model_dir = paths.staging_root / "model"
+    ref_dir = paths.staging_root / "reference"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    ref_dir.mkdir(parents=True, exist_ok=True)
+
+    packaged_checkpoint = model_dir / checkpoint_path.name
+    packaged_vocab = model_dir / "vocab.txt"
+    checkpoint_storage = link_or_copy_file(checkpoint_path, packaged_checkpoint)
+    vocab_storage = link_or_copy_file(vocab_path, packaged_vocab)
+
+    packaged_reference_audio: Path | None = None
+    reference_audio_storage: str | None = None
+    if reference_audio_path:
+        packaged_reference_audio = ref_dir / "referencia_voz.wav"
+        reference_audio_storage = link_or_copy_file(reference_audio_path, packaged_reference_audio)
+
+    reference_text_path = ref_dir / "reference_text.txt"
+    if reference_text:
+        reference_text_path.write_text(reference_text + "\n", encoding="utf-8")
+    else:
+        reference_text_path.write_text(
+            "Texto de referencia nao encontrado no pacote original. O script de teste tentara transcrever a referencia automaticamente.\n",
+            encoding="utf-8",
+        )
+
+    return {
+        "checkpoint": packaged_checkpoint.relative_to(paths.staging_root).as_posix(),
+        "vocab": packaged_vocab.relative_to(paths.staging_root).as_posix(),
+        "reference_audio": packaged_reference_audio.relative_to(paths.staging_root).as_posix()
+        if packaged_reference_audio
+        else None,
+        "reference_text": reference_text_path.relative_to(paths.staging_root).as_posix(),
+        "reference_text_available": bool(reference_text),
+        "storage": {
+            "checkpoint": checkpoint_storage,
+            "vocab": vocab_storage,
+            "reference_audio": reference_audio_storage,
+        },
+    }
 
 
 def is_bucket_url(value: str) -> bool:
@@ -388,11 +516,15 @@ def make_package_paths() -> PackagePaths:
     copied_training_dir = STAGING_DIR / "f5_tts_original"
     onnx_dir = STAGING_DIR / "onnx"
     onnx_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir = STAGING_DIR / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
     return PackagePaths(
         source_snapshot=DOWNLOAD_DIR,
         staging_root=STAGING_DIR,
         copied_training_dir=copied_training_dir,
         onnx_dir=onnx_dir,
+        scripts_dir=scripts_dir,
+        root_manifest_path=STAGING_DIR / "manifest.json",
         metadata_path=STAGING_DIR / "package_metadata.json",
         export_report_path=STAGING_DIR / "onnx_export_report.json",
     )
@@ -659,11 +791,287 @@ def validate_onnx(onnx_path: Path, report: dict[str, Any]) -> None:
         import onnxruntime as ort
 
         session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-        report["onnxruntime_inputs"] = [item.name for item in session.get_inputs()]
-        report["onnxruntime_outputs"] = [item.name for item in session.get_outputs()]
+        report["onnxruntime_inputs"] = [
+            {"name": item.name, "shape": item.shape, "type": item.type} for item in session.get_inputs()
+        ]
+        report["onnxruntime_outputs"] = [
+            {"name": item.name, "shape": item.shape, "type": item.type} for item in session.get_outputs()
+        ]
         report["onnxruntime_load"] = "ok"
     except Exception as exc:
         report["onnxruntime_load"] = f"falhou: {type(exc).__name__}: {exc}"
+
+
+def write_cpu_test_script(paths: PackagePaths) -> Path:
+    script_path = paths.scripts_dir / "test_package_cpu.py"
+    script = r'''
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+
+DEFAULT_TEXT = "Boa noite Warllem, este é um teste do modo lite em CPU."
+
+PACKAGE_DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("NUMBA_CACHE_DIR", str(PACKAGE_DEFAULT_ROOT / ".cache" / "numba"))
+os.environ.setdefault("MPLCONFIGDIR", str(PACKAGE_DEFAULT_ROOT / ".cache" / "matplotlib"))
+
+
+def ort_dtype(type_name: str):
+    mapping = {
+        "tensor(float)": np.float32,
+        "tensor(float16)": np.float16,
+        "tensor(double)": np.float64,
+        "tensor(int64)": np.int64,
+        "tensor(int32)": np.int32,
+        "tensor(bool)": np.bool_,
+    }
+    return mapping.get(type_name, np.float32)
+
+
+def concrete_shape(shape):
+    return [1 if not isinstance(dim, int) or dim <= 0 else dim for dim in shape]
+
+
+def run_onnx_smoke(package_dir: Path, report: dict) -> dict:
+    import onnxruntime as ort
+
+    onnx_files = sorted((package_dir / "onnx").glob("*.onnx"))
+    results = []
+    for onnx_file in onnx_files:
+        session = ort.InferenceSession(str(onnx_file), providers=["CPUExecutionProvider"])
+        feeds = {}
+        input_details = []
+        for item in session.get_inputs():
+            dtype = ort_dtype(item.type)
+            shape = concrete_shape(item.shape)
+            if dtype == np.bool_:
+                value = np.ones(shape, dtype=dtype)
+            elif np.issubdtype(dtype, np.integer):
+                value = np.ones(shape, dtype=dtype)
+            else:
+                value = np.zeros(shape, dtype=dtype)
+            feeds[item.name] = value
+            input_details.append({"name": item.name, "shape": item.shape, "type": item.type})
+        start = time.perf_counter()
+        outputs = session.run(None, feeds)
+        elapsed = time.perf_counter() - start
+        results.append(
+            {
+                "file": onnx_file.relative_to(package_dir).as_posix(),
+                "elapsed_seconds": elapsed,
+                "inputs": input_details,
+                "outputs": [
+                    {
+                        "name": item.name,
+                        "shape": item.shape,
+                        "type": item.type,
+                        "actual_shape": list(outputs[index].shape),
+                        "actual_dtype": str(outputs[index].dtype),
+                    }
+                    for index, item in enumerate(session.get_outputs())
+                ],
+            }
+        )
+    report["onnxruntime_cpu_smoke_test"] = {"status": "ok", "models": results}
+    return report
+
+
+def read_reference_text(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8").strip()
+    if text.startswith("Texto de referencia nao encontrado"):
+        return ""
+    return text
+
+
+def run_f5_cpu_inference(package_dir: Path, text: str, output_wav: Path, nfe_step: int, speed: float, report: dict) -> dict:
+    from importlib.resources import files
+
+    from f5_tts.infer.utils_infer import (
+        infer_process,
+        load_model,
+        load_vocoder,
+        preprocess_ref_audio_text,
+    )
+    from hydra.utils import get_class
+    from omegaconf import OmegaConf
+
+    manifest = json.loads((package_dir / "manifest.json").read_text(encoding="utf-8"))
+    checkpoint = package_dir / manifest["runtime_files"]["checkpoint"]
+    vocab = package_dir / manifest["runtime_files"]["vocab"]
+    ref_audio = package_dir / manifest["runtime_files"]["reference_audio"]
+    ref_text = read_reference_text(package_dir / manifest["runtime_files"]["reference_text"])
+    model_name = manifest.get("f5_tts_model", "F5TTS_v1_Base")
+    vocoder_name = manifest.get("vocoder", "vocos")
+
+    model_cfg = OmegaConf.load(str(files("f5_tts").joinpath(f"configs/{model_name}.yaml")))
+    model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
+    model_arc = model_cfg.model.arch
+
+    start = time.perf_counter()
+    vocoder = load_vocoder(vocoder_name=vocoder_name, is_local=False, device="cpu")
+    ema_model = load_model(
+        model_cls,
+        model_arc,
+        str(checkpoint),
+        mel_spec_type=vocoder_name,
+        vocab_file=str(vocab),
+        device="cpu",
+    )
+    ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(ref_audio), ref_text)
+    audio, sample_rate, _ = infer_process(
+        ref_audio_processed,
+        ref_text_processed,
+        text,
+        ema_model,
+        vocoder,
+        mel_spec_type=vocoder_name,
+        nfe_step=nfe_step,
+        speed=speed,
+        device="cpu",
+    )
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(output_wav), audio, sample_rate)
+    elapsed = time.perf_counter() - start
+
+    info = sf.info(str(output_wav))
+    report["wav_generation_cpu_test"] = {
+        "status": "ok",
+        "text": text,
+        "output_wav": output_wav.relative_to(package_dir).as_posix(),
+        "elapsed_seconds": elapsed,
+        "sample_rate": sample_rate,
+        "frames": info.frames,
+        "duration_seconds": info.duration,
+        "nfe_step": nfe_step,
+        "speed": speed,
+        "runtime": "F5-TTS Python + vocos on CPU; ONNX is used only for DiT/core smoke validation.",
+    }
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Testa o pacote Voz_Noslen F5-TTS ONNX em CPU.")
+    parser.add_argument("--package-dir", default=str(Path(__file__).resolve().parents[1]))
+    parser.add_argument("--text", default=DEFAULT_TEXT)
+    parser.add_argument("--output-wav", default="test_outputs/voz_noslen_lite_cpu.wav")
+    parser.add_argument("--nfe-step", type=int, default=4)
+    parser.add_argument("--speed", type=float, default=1.0)
+    parser.add_argument("--report", default="onnx_export_report.json")
+    args = parser.parse_args()
+
+    package_dir = Path(args.package_dir).resolve()
+    report_path = package_dir / args.report
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+    report = run_onnx_smoke(package_dir, report)
+    output_wav = Path(args.output_wav)
+    if not output_wav.is_absolute():
+        output_wav = package_dir / output_wav
+    report = run_f5_cpu_inference(package_dir, args.text, output_wav, args.nfe_step, args.speed, report)
+    report["cpu_test_command"] = (
+        "python scripts/test_package_cpu.py "
+        f"--text {args.text!r} --output-wav {str(Path(args.output_wav))!r} "
+        f"--nfe-step {args.nfe_step} --speed {args.speed}"
+    )
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(report["wav_generation_cpu_test"], ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+'''
+    script_path.write_text(textwrap.dedent(script).lstrip(), encoding="utf-8")
+    return script_path
+
+
+def write_root_manifest(
+    paths: PackagePaths,
+    source_label: str,
+    revision: str,
+    hf_folder: str,
+    runtime_files: dict[str, Any],
+    export_report: dict[str, Any],
+) -> None:
+    manifest = {
+        "name": "Voz_Noslen F5-TTS ONNX/Lite package",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "packager_version": PACKAGER_VERSION,
+        "source": source_label,
+        "source_revision": revision,
+        "target_huggingface_folder": hf_folder,
+        "f5_tts_model": "F5TTS_v1_Base",
+        "sample_rate": 24000,
+        "vocoder": "vocos",
+        "runtime_files": runtime_files,
+        "onnx_files": sorted(path.relative_to(paths.staging_root).as_posix() for path in paths.onnx_dir.glob("*.onnx")),
+        "test_script": "scripts/test_package_cpu.py",
+        "lite_contract_status": "partial_pipeline",
+        "lite_contract": {
+            "available_onnx": "DiT/Transformer core only: inputs x, cond, text, time, mask; output pred.",
+            "full_text_to_audio_onnx": False,
+            "required_runtime": "Python preprocessing/sampling/postprocessing from f5-tts plus vocos runtime.",
+        },
+        "limitations": [
+            "F5-TTS inference includes tokenizer/preprocess, reference-audio conditioning, iterative flow-matching sampling, vocoder and WAV writing.",
+            "The exported ONNX is not a single text-to-waveform graph and cannot satisfy a high-level text/text_ids -> audio backend contract by itself.",
+            "The CPU WAV test uses f5-tts Python + vocos for the full pipeline and onnxruntime only to validate the exported DiT/core graph.",
+            "Reference text is used when present; otherwise F5-TTS preprocessing may invoke automatic transcription for the reference audio.",
+        ],
+        "onnx_export_summary": export_report,
+    }
+    paths.root_manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def list_package_files(paths: PackagePaths) -> list[dict[str, Any]]:
+    files: list[dict[str, Any]] = []
+    for path in sorted(item for item in paths.staging_root.rglob("*") if item.is_file()):
+        files.append(
+            {
+                "path": path.relative_to(paths.staging_root).as_posix(),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    return files
+
+
+def run_cpu_package_test(paths: PackagePaths, test_text: str, nfe_step_value: int, speed_value: float) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        str(paths.scripts_dir / "test_package_cpu.py"),
+        "--package-dir",
+        str(paths.staging_root),
+        "--text",
+        test_text,
+        "--output-wav",
+        "test_outputs/voz_noslen_lite_cpu.wav",
+        "--nfe-step",
+        str(nfe_step_value),
+        "--speed",
+        str(speed_value),
+    ]
+    LOGGER.info("Rodando teste CPU do pacote: %s", " ".join(command))
+    start = datetime.now(timezone.utc)
+    completed = subprocess.run(command, cwd=str(paths.staging_root), text=True, capture_output=True, check=False)
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    result = {
+        "command": " ".join(command),
+        "elapsed_seconds": elapsed,
+        "returncode": completed.returncode,
+        "stdout_tail": completed.stdout[-4000:],
+        "stderr_tail": completed.stderr[-4000:],
+    }
+    if completed.returncode != 0:
+        raise RuntimeError(f"Teste CPU falhou com codigo {completed.returncode}. stderr: {completed.stderr[-2000:]}")
+    return result
 
 
 def write_package_metadata(
@@ -730,10 +1138,18 @@ def package_voice(args: argparse.Namespace) -> None:
     checkpoint_path = find_checkpoint(paths.copied_training_dir, manifest, manifest_path)
     vocab_path = find_vocab(paths.copied_training_dir, checkpoint_path)
     reference_audio_path = find_reference_audio(paths.copied_training_dir, args.voice_dir)
+    reference_text = extract_reference_text(manifest, manifest_path, reference_audio_path)
 
     LOGGER.info("Checkpoint escolhido: %s", checkpoint_path)
     LOGGER.info("Vocab escolhido: %s", vocab_path)
     LOGGER.info("Referencia de audio: %s", reference_audio_path or "nao encontrada")
+    LOGGER.info("Texto de referencia: %s", "encontrado" if reference_text else "nao encontrado")
+
+    if not reference_audio_path:
+        raise FileNotFoundError("Audio de referencia obrigatorio nao encontrado; pacote Lite nao pode ser testado.")
+
+    runtime_files = copy_required_runtime_files(paths, checkpoint_path, vocab_path, reference_audio_path, reference_text)
+    test_script_path = write_cpu_test_script(paths)
 
     export_report: dict[str, Any]
     try:
@@ -752,7 +1168,51 @@ def package_voice(args: argparse.Namespace) -> None:
             LOGGER.error("Exportacao ONNX falhou. Relatorio: %s", paths.export_report_path)
             raise
 
+    export_report["pipeline_contract"] = {
+        "full_text_to_audio_onnx_available": False,
+        "reason": (
+            "O F5-TTS completo depende de preprocessamento/tokenizacao, condicionamento por audio de referencia, "
+            "loop iterativo de flow matching/sampling e vocoder. O arquivo ONNX exportado cobre apenas o nucleo DiT."
+        ),
+        "backend_lite_compatibility": "Nao compativel com um backend que espera um unico ONNX text/text_ids -> waveform.",
+        "documented_pipeline": [
+            "1. preprocess/tokenizer em Python via f5-tts",
+            "2. DiT/Transformer core ONNX para validacao isolada do nucleo",
+            "3. sampling F5-TTS em Python",
+            "4. vocoder vocos em runtime Python",
+            "5. escrita WAV por soundfile",
+        ],
+    }
+    export_report["test_script"] = test_script_path.relative_to(paths.staging_root).as_posix()
+    export_report["required_runtime_files"] = runtime_files
     paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_root_manifest(paths, source_label, revision, hf_folder, runtime_files, export_report)
+
+    cpu_test_result: dict[str, Any] | None = None
+    if args.run_cpu_test:
+        try:
+            cpu_test_result = run_cpu_package_test(paths, args.test_text, args.test_nfe_step, args.test_speed)
+            export_report = load_json_if_exists(paths.export_report_path) or export_report
+            export_report["packager_cpu_test"] = cpu_test_result
+        except Exception as exc:
+            export_report["packager_cpu_test"] = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "note": "Pacote nao deve ser publicado como validado ate este teste passar em CPU.",
+            }
+            paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
+            if not args.allow_failed_cpu_test:
+                raise
+    else:
+        export_report["packager_cpu_test"] = {
+            "status": "skipped",
+            "note": "Use scripts/test_package_cpu.py para validar onnxruntime CPU e gerar WAV antes de publicar.",
+        }
+
+    export_report["generated_files"] = list_package_files(paths)
+    paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_root_manifest(paths, source_label, revision, hf_folder, runtime_files, export_report)
     write_package_metadata(
         paths,
         source_label,
@@ -800,6 +1260,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--allow-failed-export",
         action="store_true",
         help="Ainda cria e envia o pacote copiado se a exportacao ONNX falhar. Nao recomendado para pacote final.",
+    )
+    parser.add_argument("--test-text", default=os.environ.get("F5_ONNX_TEST_TEXT", DEFAULT_TEST_TEXT))
+    parser.add_argument("--test-nfe-step", type=int, default=int(os.environ.get("F5_ONNX_TEST_NFE_STEP", "4")))
+    parser.add_argument("--test-speed", type=float, default=float(os.environ.get("F5_ONNX_TEST_SPEED", "1.0")))
+    parser.add_argument("--run-cpu-test", action="store_true", default=os.environ.get("F5_ONNX_RUN_CPU_TEST", "1") == "1")
+    parser.add_argument("--skip-cpu-test", action="store_false", dest="run_cpu_test")
+    parser.add_argument(
+        "--allow-failed-cpu-test",
+        action="store_true",
+        help="Permite criar o pacote mesmo se o teste CPU falhar. Nao use para publicacao final validada.",
     )
     return parser.parse_args(argv)
 

@@ -227,6 +227,40 @@ A inferencia completa ainda precisa de etapas ao redor:
 
 Por isso o pacote final preserva os arquivos originais para permitir inferencia Python completa com a qualidade original.
 
+## Revisao 2026-06-16: pacote ONNX/Lite testavel
+
+O empacotador foi atualizado para nao apresentar o `f5_tts_transformer_core.onnx` como pipeline TTS completo. A conclusao tecnica permanece: com o F5-TTS atual, um unico ONNX de alto nivel `text/text_ids -> waveform` nao e viavel neste empacotador, porque a inferencia completa depende de:
+
+- tokenizer/preprocessamento em Python;
+- condicionamento por audio e texto de referencia;
+- loop iterativo de flow matching/sampling;
+- vocoder `vocos`;
+- pos-processamento e escrita WAV.
+
+O pacote novo passa a ser um pipeline parcial documentado:
+
+- `onnx/f5_tts_transformer_core.onnx`: nucleo DiT/Transformer exportado e validado com `onnxruntime`;
+- `model/vocab.txt`: vocabulario usado pela voz;
+- `model/<checkpoint>`: checkpoint principal da voz;
+- `reference/referencia_voz.wav`: audio de referencia;
+- `reference/reference_text.txt`: texto exato quando encontrado; se ausente, o arquivo registra que o F5-TTS tentara transcricao automatica;
+- `manifest.json`: contrato do pacote, runtime necessario e limitacoes;
+- `onnx_export_report.json`: inputs/outputs com nomes, shapes e tipos, teste CPU, arquivos gerados e limitacoes;
+- `package_metadata.json`: metadados de origem/destino;
+- `scripts/test_package_cpu.py`: valida o ONNX com `onnxruntime` e gera WAV em CPU usando `f5-tts` + `vocos`.
+
+O teste CPU agora roda por padrao antes do upload. Comando reproduzivel dentro do pacote:
+
+```bash
+python scripts/test_package_cpu.py \
+  --text "Boa noite Warllem, este é um teste do modo lite em CPU." \
+  --output-wav test_outputs/voz_noslen_lite_cpu.wav \
+  --nfe-step 4 \
+  --speed 1.0
+```
+
+Se esse teste falhar, o script interrompe a publicacao por padrao. `--skip-cpu-test` e `--allow-failed-cpu-test` ficam disponiveis apenas para diagnostico, nao para pacote final validado.
+
 ## Como verificar no Kaggle
 
 Ao rodar a celula 5, o log deve mostrar:
