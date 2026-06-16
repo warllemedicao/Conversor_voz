@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
-script_content = Path('kaggle/f5_tts_onnx_packager_kaggle.py').read_text(encoding='utf-8')
+# Carrega o conteúdo do script
+script_path = Path('kaggle/f5_tts_onnx_packager_kaggle.py')
+script_content = script_path.read_text(encoding='utf-8')
 
-# Ensure script_content is escaped correctly for insertion into a JSON-based notebook
-# We will use the list of strings format for the cell source to avoid most escaping issues.
-script_lines = [line + '\n' for line in script_content.split('\n')]
+# Formata o conteúdo do script como uma lista de strings JSON-safe
+# Isso evita problemas com aspas triplas e caracteres especiais
+script_json_lines = json.dumps(script_content.splitlines(keepends=True))
 
 cells = [
     {
@@ -28,7 +30,7 @@ cells = [
         'execution_count': None,
         'metadata': {},
         'outputs': [],
-        'source': ['!pip install -q f5-tts>=1.1.9 vocos>=0.1.0 onnx>=1.16.0 onnxruntime>=1.18.0 onnxconverter-common']
+        'source': ['!pip install -q f5-tts>=1.1.9 vocos>=0.1.0 onnx>=1.16.0 onnxruntime>=1.18.0 onnxconverter-common requests huggingface_hub']
     },
     {
         'cell_type': 'code',
@@ -36,10 +38,14 @@ cells = [
         'metadata': {},
         'outputs': [],
         'source': [
+            'import json\n',
             'from pathlib import Path\n',
-            '# Criamos o script auxiliar no worker do Kaggle\n',
-            'script_content = r\"\"\"' + script_content + '\"\"\"\n',
-            'Path(\"/kaggle/working/f5_tts_onnx_packager_kaggle.py\").write_text(script_content, encoding=\"utf-8\")'
+            '\n',
+            '# Criamos o script auxiliar no worker do Kaggle de forma segura\n',
+            'script_lines = ' + script_json_lines + '\n',
+            '\n',
+            'Path(\"/kaggle/working/f5_tts_onnx_packager_kaggle.py\").write_text(\"\".join(script_lines), encoding=\"utf-8\")\n',
+            'print(\"Script f5_tts_onnx_packager_kaggle.py criado com sucesso.\")'
         ]
     },
     {
