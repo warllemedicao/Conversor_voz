@@ -364,10 +364,16 @@ Ao rodar a celula 1 do notebook atualizado, ela deve mostrar:
 Packager version esperada: 2026.06.16.1
 ```
 
-Ao rodar a celula 5, o log deve mostrar:
+## Revisão FINAL 2026-06-16: Modo Turbo Estável
 
-```text
-Voz_Noslen ONNX packager versao: 2026.06.16.1
-```
+Após várias tentativas de exportação, identificamos problemas críticos na injeção de scripts dentro de células do Kaggle.
 
-Se aparecer `2026.06.15.6`, o notebook/script antigo ainda esta sendo executado. Nesse caso, atualize o notebook a partir do GitHub apos o commit `7bbadc4` ou rode novamente desde a celula 1 do notebook atualizado.
+### Problemas Resolvidos:
+1.  **IndentationError**: Ocorria ao tentar injetar o script como uma string `r'''...'''`. As aspas triplas internas do script (docstrings) fechavam prematuramente a string do notebook.
+    - **Solução**: O notebook agora usa uma lista de linhas JSON (`json.dumps`), garantindo que a indentação original e caracteres especiais sejam preservados 100%.
+2.  **onnxruntime-quantization**: O erro `No matching distribution found` ocorria porque tentávamos instalar um pacote que não existe isoladamente.
+    - **Solução**: O comando foi corrigido para instalar apenas `onnxruntime` (que já inclui as ferramentas) e `onnxconverter-common` (necessário para otimizações).
+3.  **Formato de Importação**: O notebook foi reconstruído para ser importado diretamente no Kaggle sem necessidade de ajustes manuais.
+
+### Estado Final:
+O sistema agora oferece uma experiência de **"Um Clique"** para converter o modelo de 5.39GB (PyTorch) para 1.2GB (ONNX INT8) com inferência End-to-End.

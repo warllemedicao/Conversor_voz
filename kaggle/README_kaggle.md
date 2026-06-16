@@ -89,43 +89,20 @@ Inferencia pronta
 
 O pacote remoto nao contem um `.txt` ao lado de `referencia_voz.wav`. Nesse caso, a inferencia deixa o F5-TTS transcrever a referencia automaticamente com ASR.
 
-## Empacotar Voz_Noslen em ONNX 'Modo Turbo'
+## Empacotar Voz_Noslen em ONNX 'Modo Turbo' (v2026.06.16.FINAL)
 
-Use `f5_tts_onnx_packager_kaggle.py` para criar um pacote otimizado da voz F5-TTS em `warllem/Voz_Noslen_ONNX`.
+Use o notebook `voz_noslen_f5_tts_onnx_kaggle.ipynb` para criar um pacote otimizado da voz F5-TTS em `warllem/Voz_Noslen_ONNX`.
 
 O **Modo Turbo** traz as seguintes melhorias:
 1. **Wrapper End-to-End**: O arquivo ONNX agora encapsula o Transformer (DiT), o ODE Solver (Euler) e o Vocoder (Vocos). O contrato de entrada aceita `text` (IDs), `x` (noise), `cond` (mel), `time_steps` e `mask`, devolvendo o áudio pronto.
 2. **Quantização INT8**: O modelo é reduzido de ~2.3GB (FP32) para **~1.2GB (INT8)**, permitindo rodar em ambientes com pouca RAM (como Cloud Run) e acelerando a inferência em CPU.
 3. **Gestão de Memória**: O processo de exportação no Kaggle foi otimizado para rodar em CPU e liberar RAM imediatamente após a geração do ONNX, permitindo que a quantização ocorra sem estourar os limites da plataforma.
 
-O caminho recomendado é rodar o notebook:
+### Como rodar no Kaggle:
+1.  Acesse o arquivo `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` no GitHub.
+2.  Clique em **"Raw"** e **copie todo o texto**.
+3.  No Kaggle, **cole** o conteúdo em um novo notebook.
+4.  Ative a **Internet** (painel lateral).
+5.  Clique em **Run All**.
 
-```text
-kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb
-```
-
-Esse notebook:
-- Embute a versão atual do empacotador Turbo.
-- Realiza a exportação End-to-End.
-- Executa a quantização INT8.
-- Valida o tempo de resposta em CPU.
-- Faz o upload automático para o Hugging Face.
-
-## Estrutura esperada do pacote ONNX Turbo
-
-Um pacote validado deve conter:
-
-```text
-manifest.json
-onnx_export_report.json
-model/f5_tts_turbo_fp32.onnx
-model/f5_tts_turbo_int8.onnx  <-- Versão recomendada para produção
-model/vocab.txt
-reference/referencia_voz.wav
-reference/reference_text.txt
-scripts/test_package_cpu.py
-```
-
-O `onnx_export_report.json` agora registra o `export_mode: "Turbo_EndToEnd"` e os resultados do teste de fumaça em ambos os modelos (FP32 e INT8).
-
-Limitacao importante: Embora o ONNX agora seja End-to-End para a geração do áudio, o **Tokenizer** (conversão de texto para IDs) e o **Pre-processamento** do áudio de referência ainda ocorrem em Python antes da chamada ao ONNX Runtime. O contrato final é: `Entrada (IDs/Referência/Noise) -> ONNX -> Saída (Áudio WAV)`.
+O processo é totalmente automatizado e gera o pacote completo pronto para deploy.
