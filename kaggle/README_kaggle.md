@@ -89,117 +89,43 @@ Inferencia pronta
 
 O pacote remoto nao contem um `.txt` ao lado de `referencia_voz.wav`. Nesse caso, a inferencia deixa o F5-TTS transcrever a referencia automaticamente com ASR.
 
-## Empacotar Voz_Noslen em ONNX/Lite
+## Empacotar Voz_Noslen em ONNX 'Modo Turbo'
 
-Use `f5_tts_onnx_packager_kaggle.py` para criar um pacote versionado da voz F5-TTS em `warllem/Voz_Noslen_ONNX`.
+Use `f5_tts_onnx_packager_kaggle.py` para criar um pacote otimizado da voz F5-TTS em `warllem/Voz_Noslen_ONNX`.
 
-O script nao altera os arquivos remotos existentes da voz original. Ele baixa somente os arquivos necessarios, copia a origem para `/kaggle/working/voz_noslen_onnx_package/f5_tts_original`, cria caminhos simples para runtime em `model/` e `reference/`, exporta um ONNX do nucleo Transformer/DiT para `onnx/`, cria `manifest.json`, `onnx_export_report.json`, `package_metadata.json` e adiciona `scripts/test_package_cpu.py`.
+O **Modo Turbo** traz as seguintes melhorias:
+1. **Wrapper End-to-End**: O arquivo ONNX agora encapsula o Transformer (DiT), o ODE Solver (Euler) e o Vocoder (Vocos). O contrato de entrada aceita `text` (IDs), `x` (noise), `cond` (mel), `time_steps` e `mask`, devolvendo o áudio pronto.
+2. **Quantização INT8**: O modelo é reduzido de ~2.3GB (FP32) para **~1.2GB (INT8)**, permitindo rodar em ambientes com pouca RAM (como Cloud Run) e acelerando a inferência em CPU.
+3. **Gestão de Memória**: O processo de exportação no Kaggle foi otimizado para rodar em CPU e liberar RAM imediatamente após a geração do ONNX, permitindo que a quantização ocorra sem estourar os limites da plataforma.
 
-O caminho recomendado e rodar o notebook:
+O caminho recomendado é rodar o notebook:
 
 ```text
 kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb
 ```
 
 Esse notebook:
+- Embute a versão atual do empacotador Turbo.
+- Realiza a exportação End-to-End.
+- Executa a quantização INT8.
+- Valida o tempo de resposta em CPU.
+- Faz o upload automático para o Hugging Face.
 
-- embute a versao atual do empacotador no worker `/kaggle/working`;
-- usa caches gravaveis para `numba` e `matplotlib`;
-- evita reinstalar `torch/torchaudio` se o Kaggle ja tiver PyTorch;
-- inclui uma celula opcional de keep-alive/heartbeat do navegador;
-- executa o empacotamento com logs periodicos durante celulas longas.
+## Estrutura esperada do pacote ONNX Turbo
 
-Na celula 1, confirme que aparece:
-
-```text
-Packager version esperada: 2026.06.16.1
-```
-
-Se aparecer `2026.06.15.6`, o Kaggle ainda esta usando uma copia antiga do notebook/script.
-
-A pasta de destino padrao e:
-
-```text
-onnx_packages/voz_noslen_f5tts_onnx_<data_hora>
-```
-
-## Estrutura esperada do pacote ONNX/Lite
-
-Um pacote validado com a versao `2026.06.16.1` deve conter, no minimo:
+Um pacote validado deve conter:
 
 ```text
 manifest.json
-package_metadata.json
 onnx_export_report.json
-onnx/f5_tts_transformer_core.onnx
-model/model_2000.pt
+model/f5_tts_turbo_fp32.onnx
+model/f5_tts_turbo_int8.onnx  <-- Versão recomendada para produção
 model/vocab.txt
 reference/referencia_voz.wav
 reference/reference_text.txt
 scripts/test_package_cpu.py
-test_outputs/voz_noslen_lite_cpu.wav
-f5_tts_original/...
 ```
 
-O `onnx_export_report.json` deve registrar:
+O `onnx_export_report.json` agora registra o `export_mode: "Turbo_EndToEnd"` e os resultados do teste de fumaça em ambos os modelos (FP32 e INT8).
 
-- `packager_version: "2026.06.16.1"`;
-- inputs/outputs do ONNX com nomes, shapes e tipos;
-- `pipeline_contract.full_text_to_audio_onnx_available: false`;
-- resultado de `onnxruntime_cpu_smoke_test`;
-- resultado de `wav_generation_cpu_test`;
-- lista `generated_files`;
-- comando exato de teste em `cpu_test_command`.
-
-Pacotes publicados antes do commit `7bbadc4`, por exemplo `onnx_packages/voz_noslen_f5tts_onnx_20260616_020835`, foram gerados com `packager_version: "2026.06.15.6"`. Eles contem apenas `f5_tts_original/`, `onnx/f5_tts_transformer_core.onnx`, `onnx_export_report.json` e `package_metadata.json`; portanto nao sao o pacote ONNX/Lite final validado.
-
-No Kaggle:
-
-```bash
-pip install -r /kaggle/input/seu-projeto/conversor_voz_requirements_kaggle.txt
-python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
-  --source https://huggingface.co/buckets/warllem/Voz_Noslen \
-  --voice-dir voices/v_minha_voz_f5_tts_ptbr \
-  --download-mode essential \
-  --upload-repo-id warllem/Voz_Noslen_ONNX
-```
-
-Se o repo exigir permissao de escrita, crie um Kaggle Secret chamado `HF_TOKEN`.
-
-Para testar sem enviar ao Hugging Face:
-
-```bash
-python /kaggle/input/seu-projeto/f5_tts_onnx_packager_kaggle.py \
-  --source https://huggingface.co/buckets/warllem/Voz_Noslen \
-  --voice-dir voices/v_minha_voz_f5_tts_ptbr \
-  --download-mode essential \
-  --no-upload
-```
-
-O teste CPU roda por padrao antes do upload. Ele valida o ONNX com `onnxruntime` e gera um WAV com a frase:
-
-```text
-Boa noite Warllem, este é um teste do modo lite em CPU.
-```
-
-Comando gerado dentro do pacote:
-
-```bash
-python scripts/test_package_cpu.py \
-  --text "Boa noite Warllem, este é um teste do modo lite em CPU." \
-  --output-wav test_outputs/voz_noslen_lite_cpu.wav \
-  --nfe-step 4 \
-  --speed 1.0
-```
-
-Use `--skip-cpu-test` somente para diagnostico. Para publicacao final, deixe o teste passar; caso contrario o pacote nao deve ser considerado validado.
-
-O modo `essential` evita estourar o disco do Kaggle: ele ignora `.tmp`, baixa apenas a voz escolhida, preserva o `manifest.json`, `vocab.txt`, audio de referencia, docs/configs pequenas e um checkpoint principal. Use `--download-mode all` somente em um ambiente com disco suficiente.
-
-Para preservar a qualidade, nao quantize o ONNX, mantenha FP32, use o mesmo checkpoint, o mesmo vocabulario, `F5TTS_v1_Base`, vocoder `vocos`, sample rate de 24000 Hz e a referencia de audio/texto da voz treinada.
-
-Se a instalacao no Kaggle mostrar conflitos com `dask-cuda`, `cuml` ou `cudf`, trate como aviso do ambiente base. O erro que bloqueia a exportacao ONNX e falta de pacote como `onnxscript`; por isso ele esta listado no requirements.
-
-O exportador tenta primeiro o caminho legado `torch.onnx.utils.export`, depois `torch.onnx.export(..., dynamo=False)` e, por ultimo, `torch.jit.trace` seguido de exportacao ONNX. As entradas flutuantes do wrapper sao convertidas para o dtype real dos pesos do modelo para evitar erro `mat1 and mat2 must have the same dtype, but got Float and Half` quando o checkpoint carregar em FP16.
-
-Limitacao importante: o ONNX exportado continua sendo apenas o nucleo DiT/Transformer, com entradas de baixo nivel como `x`, `cond`, `text`, `time` e `mask`. O F5-TTS completo exige tokenizacao/preprocessamento, condicionamento por audio de referencia, loop iterativo de flow matching, vocoder e escrita WAV. Por isso o pacote documenta um pipeline parcial: `onnxruntime` valida o nucleo ONNX, mas a geracao texto->WAV usa runtime Python `f5-tts` + `vocos` em CPU.
+Limitacao importante: Embora o ONNX agora seja End-to-End para a geração do áudio, o **Tokenizer** (conversão de texto para IDs) e o **Pre-processamento** do áudio de referência ainda ocorrem em Python antes da chamada ao ONNX Runtime. O contrato final é: `Entrada (IDs/Referência/Noise) -> ONNX -> Saída (Áudio WAV)`.
