@@ -109,11 +109,49 @@ Esse notebook:
 - inclui uma celula opcional de keep-alive/heartbeat do navegador;
 - executa o empacotamento com logs periodicos durante celulas longas.
 
+Na celula 1, confirme que aparece:
+
+```text
+Packager version esperada: 2026.06.16.1
+```
+
+Se aparecer `2026.06.15.6`, o Kaggle ainda esta usando uma copia antiga do notebook/script.
+
 A pasta de destino padrao e:
 
 ```text
 onnx_packages/voz_noslen_f5tts_onnx_<data_hora>
 ```
+
+## Estrutura esperada do pacote ONNX/Lite
+
+Um pacote validado com a versao `2026.06.16.1` deve conter, no minimo:
+
+```text
+manifest.json
+package_metadata.json
+onnx_export_report.json
+onnx/f5_tts_transformer_core.onnx
+model/model_2000.pt
+model/vocab.txt
+reference/referencia_voz.wav
+reference/reference_text.txt
+scripts/test_package_cpu.py
+test_outputs/voz_noslen_lite_cpu.wav
+f5_tts_original/...
+```
+
+O `onnx_export_report.json` deve registrar:
+
+- `packager_version: "2026.06.16.1"`;
+- inputs/outputs do ONNX com nomes, shapes e tipos;
+- `pipeline_contract.full_text_to_audio_onnx_available: false`;
+- resultado de `onnxruntime_cpu_smoke_test`;
+- resultado de `wav_generation_cpu_test`;
+- lista `generated_files`;
+- comando exato de teste em `cpu_test_command`.
+
+Pacotes publicados antes do commit `7bbadc4`, por exemplo `onnx_packages/voz_noslen_f5tts_onnx_20260616_020835`, foram gerados com `packager_version: "2026.06.15.6"`. Eles contem apenas `f5_tts_original/`, `onnx/f5_tts_transformer_core.onnx`, `onnx_export_report.json` e `package_metadata.json`; portanto nao sao o pacote ONNX/Lite final validado.
 
 No Kaggle:
 

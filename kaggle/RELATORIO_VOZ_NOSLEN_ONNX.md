@@ -261,12 +261,113 @@ python scripts/test_package_cpu.py \
 
 Se esse teste falhar, o script interrompe a publicacao por padrao. `--skip-cpu-test` e `--allow-failed-cpu-test` ficam disponiveis apenas para diagnostico, nao para pacote final validado.
 
+## Estrutura final esperada
+
+Um pacote final gerado pela versao `2026.06.16.1` deve conter esta estrutura minima:
+
+```text
+manifest.json
+package_metadata.json
+onnx_export_report.json
+onnx/f5_tts_transformer_core.onnx
+model/model_2000.pt
+model/vocab.txt
+reference/referencia_voz.wav
+reference/reference_text.txt
+scripts/test_package_cpu.py
+test_outputs/voz_noslen_lite_cpu.wav
+f5_tts_original/
+```
+
+Notas sobre essa estrutura:
+
+- `model/` e `reference/` sao caminhos simples para runtime Lite/teste.
+- `f5_tts_original/` preserva a estrutura original baixada da voz, sem alterar a origem `Voz_Noslen`.
+- Quando o filesystem permite, `model/model_2000.pt`, `model/vocab.txt` e `reference/referencia_voz.wav` sao hardlinks locais antes do upload para reduzir duplicacao no worker. No Hugging Face, arquivos iguais podem ser deduplicados por LFS.
+- `reference/reference_text.txt` contem o texto de referencia quando encontrado. Se nao houver texto exato no pacote original, o arquivo registra essa ausencia e o teste usa o preprocessamento/transcricao automatica do F5-TTS.
+- `test_outputs/voz_noslen_lite_cpu.wav` so aparece quando o teste CPU completo passou.
+
+O relatorio `onnx_export_report.json` da versao final deve conter:
+
+- `packager_version: "2026.06.16.1"`;
+- `onnxruntime_inputs` e `onnxruntime_outputs` com `name`, `shape` e `type`;
+- `pipeline_contract.full_text_to_audio_onnx_available: false`;
+- `onnxruntime_cpu_smoke_test.status: "ok"`;
+- `wav_generation_cpu_test.status: "ok"`;
+- `cpu_test_command`;
+- `generated_files`.
+
+## Auditoria do pacote 20260616_020835
+
+O pacote publicado em:
+
+```text
+onnx_packages/voz_noslen_f5tts_onnx_20260616_020835
+```
+
+foi analisado apos o upload. Ele foi gerado com o empacotador antigo:
+
+```json
+"packager_version": "2026.06.15.6"
+```
+
+Arquivos encontrados nesse pacote:
+
+```text
+f5_tts_original/...
+onnx/f5_tts_transformer_core.onnx
+onnx_export_report.json
+package_metadata.json
+```
+
+Arquivos ausentes em relacao ao pacote final esperado:
+
+```text
+manifest.json
+model/model_2000.pt
+model/vocab.txt
+reference/referencia_voz.wav
+reference/reference_text.txt
+scripts/test_package_cpu.py
+test_outputs/voz_noslen_lite_cpu.wav
+```
+
+O ONNX publicado foi validado com `onnxruntime`, mas continua sendo apenas o nucleo DiT/Transformer:
+
+```text
+inputs:
+x     FLOAT  [1, 64, 100]
+cond  FLOAT  [1, 64, 100]
+text  INT64  [1, 32]
+time  FLOAT  [1]
+mask  BOOL   [1, 64]
+
+outputs:
+pred  FLOAT16 [1, 64, 100]
+```
+
+Smoke test local do ONNX publicado:
+
+```text
+load_seconds: 4.757
+run_seconds: 0.472
+output: (1, 64, 100), float16
+```
+
+Conclusao: `20260616_020835` nao deve ser tratado como pacote ONNX/Lite final. Ele e um pacote antigo, util apenas como artefato experimental do nucleo Transformer.
+
 ## Como verificar no Kaggle
+
+Ao rodar a celula 1 do notebook atualizado, ela deve mostrar:
+
+```text
+Packager version esperada: 2026.06.16.1
+```
 
 Ao rodar a celula 5, o log deve mostrar:
 
 ```text
-Voz_Noslen ONNX packager versao: 2026.06.15.6
+Voz_Noslen ONNX packager versao: 2026.06.16.1
 ```
 
-Se essa linha nao aparecer, o notebook/script antigo ainda esta sendo executado. Nesse caso, rode novamente desde a celula 1 ou reimporte o notebook atualizado.
+Se aparecer `2026.06.15.6`, o notebook/script antigo ainda esta sendo executado. Nesse caso, atualize o notebook a partir do GitHub apos o commit `7bbadc4` ou rode novamente desde a celula 1 do notebook atualizado.
