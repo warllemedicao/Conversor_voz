@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import logging
 import os
@@ -16,17 +15,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
-try:
-    from onnxruntime.quantization import quantize_dynamic, QuantType
-except ImportError:
-    pass
-
-
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
-PACKAGER_VERSION = "2026.06.16.1"
-DEFAULT_TEST_TEXT = "Boa noite Warllem, este é um teste do modo lite em CPU."
+PACKAGER_VERSION = "2026.06.17.1"
+DEFAULT_TEST_TEXT = "Boa noite Warllem, este é um teste do modo turbo em CPU."
 
 
 def resolve_work_root() -> Path:
@@ -52,7 +45,6 @@ LOG_PATH = WORK_ROOT / "voz_noslen_onnx_packager.log"
 class PackagePaths:
     source_snapshot: Path
     staging_root: Path
-    copied_training_dir: Path
     onnx_dir: Path
     scripts_dir: Path
     root_manifest_path: Path
@@ -121,13 +113,6 @@ def clean_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def copy_tree(src: Path, dst: Path) -> None:
-    if dst.exists():
-        shutil.rmtree(dst)
-    ignore = shutil.ignore_patterns(".git", ".cache", "__pycache__", "*.tmp")
-    shutil.copytree(src, dst, ignore=ignore)
-
-
 def link_or_copy_file(src: Path, dst: Path) -> str:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
@@ -138,13 +123,6 @@ def link_or_copy_file(src: Path, dst: Path) -> str:
     except OSError:
         shutil.copy2(src, dst)
         return "copy"
-
-
-def move_tree(src: Path, dst: Path) -> None:
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src), str(dst))
 
 
 def find_first(root: Path, patterns: tuple[str, ...]) -> Path | None:
@@ -518,7 +496,6 @@ def download_source(
 
 def make_package_paths() -> PackagePaths:
     clean_dir(STAGING_DIR)
-    copied_training_dir = STAGING_DIR / "f5_tts_original"
     onnx_dir = STAGING_DIR / "onnx"
     onnx_dir.mkdir(parents=True, exist_ok=True)
     scripts_dir = STAGING_DIR / "scripts"
@@ -526,7 +503,6 @@ def make_package_paths() -> PackagePaths:
     return PackagePaths(
         source_snapshot=DOWNLOAD_DIR,
         staging_root=STAGING_DIR,
-        copied_training_dir=copied_training_dir,
         onnx_dir=onnx_dir,
         scripts_dir=scripts_dir,
         root_manifest_path=STAGING_DIR / "manifest.json",
@@ -580,101 +556,82 @@ def infer_module_float_dtype(module: Any) -> Any:
     return torch.float32
 
 
-class F5TTSOnnxWrapper(torch.nn.Module):
-    """
-    Wrapper End-to-End para F5-TTS: Transformer (DiT) + ODE Solver (Euler) + Vocoder (Vocos).
-    """
-
-    def __init__(self, model: Any, vocoder: Any, compute_dtype: Any) -> None:
-        super().__init__()
-        self.transformer = getattr(model, "transformer", model)
-        self.vocoder = vocoder
-        self.compute_dtype = compute_dtype
-
-    def forward(self, x, cond, text, time_steps, mask):
-        """
-        x: Noise inicial [batch, duration, 100]
-        cond: Mel de referência e silêncio [batch, duration, 100]
-        text: IDs de texto [batch, text_len]
-        time_steps: Passos de tempo para o Euler ODE Solver [num_steps + 1]
-        mask: Máscara booleana para os frames [batch, duration]
-        """
-        curr_x = x
-        # Loop do ODE Solver (Euler)
-        # Note: torch.onnx.export desenrolará este loop se o range for fixo,
-        # ou criará um Loop se usarmos formas mais dinâmicas.
-        # Para compatibilidade máxima e performance em CPU (Modo Turbo), 
-        # o número de passos é controlado pelo tensor time_steps.
-        num_steps = time_steps.shape[0] - 1
-        
-        # Casting manual para o dtype de computação para evitar erros de tipo no ONNX
-        curr_x = curr_x.to(self.compute_dtype)
-        cond = cond.to(self.compute_dtype)
-        
-        # Fazemos o loop. Como o ONNX não gosta de loops simbólicos complexos,
-        # vamos usar uma abordagem que o exportador consiga rastrear.
-        for i in range(32): # Limite máximo arbitrário para unroll/loop
-            if i >= num_steps:
-                break
-            
-            t = time_steps[i].to(self.compute_dtype)
-            t_next = time_steps[i+1].to(self.compute_dtype)
-            dt = t_next - t
-            
-            # Predict velocity (DiT)
-            # F5-TTS DiT forward: x, cond, text, time, mask
-            v = self.transformer(
-                x=curr_x,
-                cond=cond,
-                text=text,
-                time=t.expand(curr_x.shape[0]),
-                mask=mask,
-                drop_audio_cond=False,
-                drop_text=False,
-            )
-            
-            curr_x = curr_x + v * dt
-
-        # Decodificação com Vocos
-        # Vocos espera [batch, 100, duration]
-        mel = curr_x.transpose(1, 2)
-        audio = self.vocoder.decode(mel)
-        return audio
-
-
 def quantize_onnx_model(input_path: Path, output_path: Path) -> None:
     try:
         from onnxruntime.quantization import QuantType, quantize_dynamic
     except ImportError:
-        LOGGER.warning("onnxruntime-quantization não disponível. Pulando etapa de quantização.")
+        LOGGER.warning("onnxruntime-quantization nao disponivel. Pulando etapa de quantizacao.")
         return
 
-    LOGGER.info("Iniciando quantização INT8: %s -> %s", input_path.name, output_path.name)
+    LOGGER.info("Iniciando quantizacao INT8 opcional: %s -> %s", input_path.name, output_path.name)
     quantize_dynamic(
         model_input=str(input_path),
         model_output=str(output_path),
         weight_type=QuantType.QUInt8,
         optimize_model=True,
     )
-    LOGGER.info("Quantização INT8 concluída. Tamanho aproximado: 1.2GB (se base de 5GB).")
+    LOGGER.info("Quantizacao INT8 concluida.")
 
 
-def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Path, manifest: dict[str, Any] | None) -> dict[str, Any]:
+def export_f5_core_to_onnx(
+    checkpoint_path: Path,
+    vocab_path: Path,
+    onnx_dir: Path,
+    manifest: dict[str, Any] | None,
+    quantize: bool,
+) -> dict[str, Any]:
     import gc
     import torch
     from f5_tts.infer.utils_infer import load_model, load_vocoder
     from hydra.utils import get_class
 
-    device = "cpu" # Forçado para CPU conforme requisito 3 (Gestão de Memória no Kaggle)
+    class F5TTSOnnxWrapper(torch.nn.Module):
+        """
+        Wrapper Turbo para F5-TTS: DiT + Euler + Vocos.
+        Mantem a precisao original por padrao; INT8 fica como artefato opcional.
+        """
+
+        def __init__(self, model: Any, vocoder: Any, compute_dtype: Any) -> None:
+            super().__init__()
+            self.transformer = getattr(model, "transformer", model)
+            self.vocoder = vocoder
+            self.compute_dtype = compute_dtype
+
+        def forward(self, x, cond, text, time_steps, mask):
+            curr_x = x.to(self.compute_dtype)
+            cond = cond.to(self.compute_dtype)
+            num_steps = time_steps.shape[0] - 1
+
+            for i in range(32):
+                if i >= num_steps:
+                    break
+
+                t = time_steps[i].to(self.compute_dtype)
+                t_next = time_steps[i + 1].to(self.compute_dtype)
+                dt = t_next - t
+                v = self.transformer(
+                    x=curr_x,
+                    cond=cond,
+                    text=text,
+                    time=t.expand(curr_x.shape[0]),
+                    mask=mask,
+                    drop_audio_cond=False,
+                    drop_text=False,
+                )
+                curr_x = curr_x + v * dt
+
+            mel = curr_x.transpose(1, 2)
+            return self.vocoder.decode(mel)
+
+    device = "cpu"
     config = build_default_f5_config(manifest)
     model_cls = get_class(f"f5_tts.model.{config['backbone']}")
-    
-    onnx_fp32_path = onnx_dir / "f5_tts_turbo_fp32.onnx"
+
+    onnx_fp32_path = onnx_dir / "f5_tts_turbo_original_precision.onnx"
     onnx_int8_path = onnx_dir / "f5_tts_turbo_int8.onnx"
 
-    LOGGER.info("Carregando F5-TTS e Vocos em CPU para exportação End-to-End")
-    
-    # Carregamento otimizado (CPU)
+    LOGGER.info("Carregando F5-TTS e Vocos em CPU para exportacao Turbo ONNX")
+
     vocoder = load_vocoder(vocoder_name=config["mel_spec"]["mel_spec_type"], is_local=False, device=device)
     model = load_model(
         model_cls,
@@ -687,29 +644,25 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
     )
     model.eval()
     model_compute_dtype = infer_module_float_dtype(model)
-    
+
     wrapped = F5TTSOnnxWrapper(model, vocoder, model_compute_dtype).to(device).eval()
 
-    # Inputs de amostra para exportação (Static shapes para facilitar exportação inicial)
-    # text_ids e speed conforme requisito 5
     batch = 1
-    duration = 256 # total (ref + gen)
+    duration = 256
     text_tokens = 128
-    
+
     x = torch.randn(batch, duration, 100, device=device)
     cond = torch.zeros(batch, duration, 100, device=device)
     text = torch.randint(0, 1000, (batch, text_tokens), device=device)
     mask = torch.ones(batch, duration, dtype=torch.bool, device=device)
-    
-    # Gerar time_steps (Euler com Sway)
-    nfe_steps = 8 # Padrão "Turbo"
+
+    nfe_steps = 8
     t = torch.linspace(0, 1, nfe_steps + 1, device=device)
     sway_coef = -1.0
     time_steps = t + sway_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
 
-    LOGGER.info("Exportando Wrapper Completo para %s", onnx_fp32_path.name)
-    
-    # Exportação ONNX
+    LOGGER.info("Exportando wrapper Turbo com precisao original para %s", onnx_fp32_path.name)
+
     torch.onnx.export(
         wrapped,
         (x, cond, text, time_steps, mask),
@@ -726,8 +679,7 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         do_constant_folding=True,
     )
 
-    # Limpeza Imediata de Memória (Requisito 3)
-    LOGGER.info("Limpando modelos originais da RAM para liberar espaço para quantização...")
+    LOGGER.info("Limpando modelos da RAM apos exportacao...")
     del model
     del vocoder
     del wrapped
@@ -735,9 +687,9 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Quantização INT8 (Requisito 2)
-    quantize_onnx_model(onnx_fp32_path, onnx_int8_path)
-    
+    if quantize:
+        quantize_onnx_model(onnx_fp32_path, onnx_int8_path)
+
     final_onnx = onnx_int8_path if onnx_int8_path.exists() else onnx_fp32_path
 
     report: dict[str, Any] = {
@@ -748,9 +700,10 @@ def export_f5_core_to_onnx(checkpoint_path: Path, vocab_path: Path, onnx_dir: Pa
         "onnx_int8": str(onnx_int8_path.name) if onnx_int8_path.exists() else None,
         "checkpoint": str(checkpoint_path),
         "device": device,
-        "export_mode": "Turbo_EndToEnd",
+        "export_mode": "Turbo_OriginalPrecision",
         "nfe_steps": nfe_steps,
-        "note": "Este ONNX contem o Wrapper completo (Transformer + Euler + Vocos). Use o arquivo _int8 para maior performance.",
+        "quality_policy": "Preserva a precisao original do checkpoint por padrao. INT8 e opcional e nao e usado como artefato principal quando a prioridade e qualidade da voz neural treinada.",
+        "note": "ONNX Turbo com DiT + Euler + Vocos. O pacote final nao inclui a arvore antiga f5_tts_original.",
     }
     return report
 
@@ -784,6 +737,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -792,11 +746,15 @@ import numpy as np
 import soundfile as sf
 
 
-DEFAULT_TEXT = "Boa noite Warllem, este é um teste do modo lite em CPU."
+DEFAULT_TEXT = "Boa noite Warllem, este é um teste do modo turbo em CPU."
 
 PACKAGE_DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("NUMBA_CACHE_DIR", str(PACKAGE_DEFAULT_ROOT / ".cache" / "numba"))
 os.environ.setdefault("MPLCONFIGDIR", str(PACKAGE_DEFAULT_ROOT / ".cache" / "matplotlib"))
+
+LOGGER = logging.getLogger("voz_noslen_package_cpu_test")
+if not LOGGER.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def ort_dtype(type_name: str):
@@ -819,7 +777,7 @@ def run_onnx_smoke(package_dir: Path, report: dict) -> dict:
     import onnxruntime as ort
     import numpy as np
 
-    onnx_files = sorted(package_dir.glob("model/*.onnx"))
+    onnx_files = sorted(package_dir.glob("onnx/*.onnx"))
     if not onnx_files:
         LOGGER.warning("Nenhum arquivo ONNX encontrado para smoke test.")
         return report
@@ -861,7 +819,8 @@ def run_onnx_smoke(package_dir: Path, report: dict) -> dict:
             LOGGER.warning("Falha no smoke test de %s: %s", onnx_file.name, exc)
             results.append({"file": onnx_file.name, "status": "error", "error": str(exc)})
 
-    report["onnxruntime_cpu_smoke_test"] = {"status": "ok", "models": results}
+    status = "ok" if all(item.get("status") == "ok" for item in results) else "failed"
+    report["onnxruntime_cpu_smoke_test"] = {"status": status, "models": results}
     return report
 
 
@@ -935,7 +894,7 @@ def run_f5_cpu_inference(package_dir: Path, text: str, output_wav: Path, nfe_ste
         "duration_seconds": info.duration,
         "nfe_step": nfe_step,
         "speed": speed,
-        "runtime": "F5-TTS Python + vocos on CPU; ONNX is used only for DiT/core smoke validation.",
+        "runtime": "F5-TTS Python preprocessing + ONNX Turbo smoke validation + vocos-compatible runtime on CPU.",
     }
     return report
 
@@ -944,7 +903,7 @@ def main():
     parser = argparse.ArgumentParser(description="Testa o pacote Voz_Noslen F5-TTS ONNX em CPU.")
     parser.add_argument("--package-dir", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--text", default=DEFAULT_TEXT)
-    parser.add_argument("--output-wav", default="test_outputs/voz_noslen_lite_cpu.wav")
+    parser.add_argument("--output-wav", default="test_outputs/voz_noslen_turbo_cpu.wav")
     parser.add_argument("--nfe-step", type=int, default=4)
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--report", default="onnx_export_report.json")
@@ -983,7 +942,7 @@ def write_root_manifest(
     export_report: dict[str, Any],
 ) -> None:
     manifest = {
-        "name": "Voz_Noslen F5-TTS ONNX/Lite package",
+        "name": "Voz_Noslen F5-TTS ONNX Turbo package",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "packager_version": PACKAGER_VERSION,
         "source": source_label,
@@ -995,16 +954,18 @@ def write_root_manifest(
         "runtime_files": runtime_files,
         "onnx_files": sorted(path.relative_to(paths.staging_root).as_posix() for path in paths.onnx_dir.glob("*.onnx")),
         "test_script": "scripts/test_package_cpu.py",
-        "lite_contract_status": "partial_pipeline",
-        "lite_contract": {
-            "available_onnx": "DiT/Transformer core only: inputs x, cond, text, time, mask; output pred.",
+        "package_layout": "turbo_runtime_only",
+        "legacy_training_tree_included": False,
+        "turbo_contract": {
+            "available_onnx": "Turbo wrapper: inputs x, cond, text, time_steps, mask; output audio.",
             "full_text_to_audio_onnx": False,
-            "required_runtime": "Python preprocessing/sampling/postprocessing from f5-tts plus vocos runtime.",
+            "required_runtime": "Backend still must prepare text ids, conditioning mel/noise/mask and time_steps before calling ONNX.",
+            "quality_policy": "Original precision ONNX is the primary artifact. INT8 quantization is optional and disabled by default.",
         },
         "limitations": [
-            "F5-TTS inference includes tokenizer/preprocess, reference-audio conditioning, iterative flow-matching sampling, vocoder and WAV writing.",
-            "The exported ONNX is not a single text-to-waveform graph and cannot satisfy a high-level text/text_ids -> audio backend contract by itself.",
-            "The CPU WAV test uses f5-tts Python + vocos for the full pipeline and onnxruntime only to validate the exported DiT/core graph.",
+            "F5-TTS inference still requires tokenizer/preprocess and reference-audio conditioning before ONNX execution.",
+            "The exported ONNX is not a one-input text-to-waveform graph; it expects prepared tensors.",
+            "The CPU WAV test uses f5-tts Python for preprocessing and onnxruntime to validate generated ONNX files.",
             "Reference text is used when present; otherwise F5-TTS preprocessing may invoke automatic transcription for the reference audio.",
         ],
         "onnx_export_summary": export_report,
@@ -1033,7 +994,7 @@ def run_cpu_package_test(paths: PackagePaths, test_text: str, nfe_step_value: in
         "--text",
         test_text,
         "--output-wav",
-        "test_outputs/voz_noslen_lite_cpu.wav",
+        "test_outputs/voz_noslen_turbo_cpu.wav",
         "--nfe-step",
         str(nfe_step_value),
         "--speed",
@@ -1060,6 +1021,7 @@ def write_package_metadata(
     repo_id: str,
     revision: str,
     hf_folder: str,
+    source_root: Path,
     checkpoint_path: Path,
     vocab_path: Path,
     reference_audio_path: Path | None,
@@ -1072,12 +1034,13 @@ def write_package_metadata(
         "source_repo_id": repo_id,
         "source_revision": revision,
         "target_huggingface_folder": hf_folder,
-        "policy": "Arquivos originais copiados; nenhum arquivo do treinamento remoto e alterado.",
-        "copied_training_dir": str(paths.copied_training_dir),
-        "checkpoint": str(checkpoint_path.relative_to(paths.copied_training_dir)),
-        "vocab": str(vocab_path.relative_to(paths.copied_training_dir)),
-        "reference_audio": str(reference_audio_path.relative_to(paths.copied_training_dir)) if reference_audio_path else None,
-        "manifest": str(manifest_path.relative_to(paths.copied_training_dir)) if manifest_path else None,
+        "policy": "Pacote final sem arvore antiga de treino; apenas runtime minimo para preservar a voz treinada.",
+        "legacy_training_tree_included": False,
+        "source_snapshot": str(source_root),
+        "checkpoint": str(checkpoint_path.relative_to(source_root)),
+        "vocab": str(vocab_path.relative_to(source_root)),
+        "reference_audio": str(reference_audio_path.relative_to(source_root)) if reference_audio_path else None,
+        "manifest": str(manifest_path.relative_to(source_root)) if manifest_path else None,
         "manifest_summary": manifest or {},
         "onnx_export": export_report,
     }
@@ -1110,15 +1073,14 @@ def package_voice(args: argparse.Namespace) -> None:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     hf_folder = args.hf_folder or f"onnx_packages/voz_noslen_f5tts_onnx_{timestamp}"
 
-    source, source_label = download_source(args.source, args.repo_id, revision, token, args.voice_dir, args.download_mode)
+    source_root, source_label = download_source(args.source, args.repo_id, revision, token, args.voice_dir, args.download_mode)
     paths = make_package_paths()
-    move_tree(source, paths.copied_training_dir)
 
-    manifest_path = find_manifest(paths.copied_training_dir)
+    manifest_path = find_manifest(source_root)
     manifest = load_json_if_exists(manifest_path)
-    checkpoint_path = find_checkpoint(paths.copied_training_dir, manifest, manifest_path)
-    vocab_path = find_vocab(paths.copied_training_dir, checkpoint_path)
-    reference_audio_path = find_reference_audio(paths.copied_training_dir, args.voice_dir)
+    checkpoint_path = find_checkpoint(source_root, manifest, manifest_path)
+    vocab_path = find_vocab(source_root, checkpoint_path)
+    reference_audio_path = find_reference_audio(source_root, args.voice_dir)
     reference_text = extract_reference_text(manifest, manifest_path, reference_audio_path)
 
     LOGGER.info("Checkpoint escolhido: %s", checkpoint_path)
@@ -1127,14 +1089,14 @@ def package_voice(args: argparse.Namespace) -> None:
     LOGGER.info("Texto de referencia: %s", "encontrado" if reference_text else "nao encontrado")
 
     if not reference_audio_path:
-        raise FileNotFoundError("Audio de referencia obrigatorio nao encontrado; pacote Lite nao pode ser testado.")
+        raise FileNotFoundError("Audio de referencia obrigatorio nao encontrado; pacote Turbo nao pode ser testado.")
 
     runtime_files = copy_required_runtime_files(paths, checkpoint_path, vocab_path, reference_audio_path, reference_text)
     test_script_path = write_cpu_test_script(paths)
 
     export_report: dict[str, Any]
     try:
-        export_report = export_f5_core_to_onnx(checkpoint_path, vocab_path, paths.onnx_dir, manifest)
+        export_report = export_f5_core_to_onnx(checkpoint_path, vocab_path, paths.onnx_dir, manifest, args.quantize)
     except Exception as exc:
         export_report = {
             "status": "failed",
@@ -1142,7 +1104,7 @@ def package_voice(args: argparse.Namespace) -> None:
             "error_type": type(exc).__name__,
             "error": str(exc),
             "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            "note": "A copia dos arquivos originais foi preservada. Corrija a exportacao antes de usar este pacote como ONNX.",
+            "note": "O pacote final nao inclui a arvore antiga de treino. Corrija a exportacao antes de usar este pacote como ONNX.",
         }
         paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
         if not args.allow_failed_export:
@@ -1151,18 +1113,19 @@ def package_voice(args: argparse.Namespace) -> None:
 
     export_report["pipeline_contract"] = {
         "full_text_to_audio_onnx_available": False,
+        "turbo_wrapper_available": export_report.get("status") == "ok",
         "reason": (
-            "O F5-TTS completo depende de preprocessamento/tokenizacao, condicionamento por audio de referencia, "
-            "loop iterativo de flow matching/sampling e vocoder. O arquivo ONNX exportado cobre apenas o nucleo DiT."
+            "O F5-TTS ainda depende de preprocessamento/tokenizacao e condicionamento por audio de referencia antes da chamada ONNX. "
+            "O wrapper Turbo exportado recebe tensores ja preparados e retorna audio."
         ),
-        "backend_lite_compatibility": "Nao compativel com um backend que espera um unico ONNX text/text_ids -> waveform.",
+        "backend_turbo_compatibility": "Compativel com backend que prepare x, cond, text ids, time_steps e mask. Nao compativel com um backend que envie apenas texto cru.",
         "documented_pipeline": [
             "1. preprocess/tokenizer em Python via f5-tts",
-            "2. DiT/Transformer core ONNX para validacao isolada do nucleo",
-            "3. sampling F5-TTS em Python",
-            "4. vocoder vocos em runtime Python",
-            "5. escrita WAV por soundfile",
+            "2. preparacao de cond/noise/mask/time_steps",
+            "3. ONNX Turbo com DiT + Euler + Vocos",
+            "4. escrita WAV por soundfile",
         ],
+        "quality_policy": "Usar o ONNX original_precision para manter a voz neural treinada. INT8 e opcional e deve ser validado por escuta antes de producao.",
     }
     export_report["test_script"] = test_script_path.relative_to(paths.staging_root).as_posix()
     export_report["required_runtime_files"] = runtime_files
@@ -1199,6 +1162,7 @@ def package_voice(args: argparse.Namespace) -> None:
         source_label,
         revision,
         hf_folder,
+        source_root,
         checkpoint_path,
         vocab_path,
         reference_audio_path,
@@ -1245,6 +1209,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--test-text", default=os.environ.get("F5_ONNX_TEST_TEXT", DEFAULT_TEST_TEXT))
     parser.add_argument("--test-nfe-step", type=int, default=int(os.environ.get("F5_ONNX_TEST_NFE_STEP", "4")))
     parser.add_argument("--test-speed", type=float, default=float(os.environ.get("F5_ONNX_TEST_SPEED", "1.0")))
+    parser.add_argument("--quantize", action="store_true", default=os.environ.get("F5_ONNX_QUANTIZE", "0") == "1")
+    parser.add_argument("--no-quantize", action="store_false", dest="quantize")
     parser.add_argument("--run-cpu-test", action="store_true", default=os.environ.get("F5_ONNX_RUN_CPU_TEST", "1") == "1")
     parser.add_argument("--skip-cpu-test", action="store_false", dest="run_cpu_test")
     parser.add_argument(

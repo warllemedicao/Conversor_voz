@@ -1,5 +1,6 @@
 huggingface_hub>=0.31.0,<1.0
 hf-xet>=1.1.0
+requests>=2.31.0
 f5-tts>=1.1.9
 safetensors>=0.4.5
 torch>=2.4.0
