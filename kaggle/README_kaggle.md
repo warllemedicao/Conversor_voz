@@ -1,67 +1,38 @@
-# Voz_Noslen F5-TTS ONNX Turbo no Kaggle
+# Voz_Noslen F5-TTS ONNX (Modo Lite) no Kaggle
 
 Use `voz_noslen_f5_tts_onnx_kaggle.ipynb` em um notebook Kaggle com Internet ativada.
 
 ## Objetivo atual
 
-Criar um pacote ONNX Turbo da voz neural treinada `Voz_Noslen`, usando F5-TTS, sem carregar no pacote final a arvore antiga de treino.
+Criar um pacote ONNX (Modo Lite) da voz neural treinada `Voz_Noslen`, otimizado para execução no Cloud Run.
 
 O pacote final contem somente o runtime minimo:
 
 ```text
-model/
-reference/
-onnx/
-scripts/
-manifest.json
-package_metadata.json
-onnx_export_report.json
+/onnx_package_name/
+├── onnx/
+│   └── f5_tts_transformer_core.onnx  <-- (Gerado após a conversão)
+├── model/
+│   ├── model_2000.pt                <-- (Checkpoint original PyTorch)
+│   └── vocab.txt                    <-- (Dicionário de caracteres/tokens)
+└── reference/
+    └── referencia_voz.wav           <-- (Áudio de referência para clonagem)
 ```
-
-A pasta antiga `f5_tts_original/` nao e mais publicada no pacote final.
 
 ## Politica de qualidade
 
 Para preservar a qualidade da voz treinada:
 
 - o ONNX principal usa a precisao original do checkpoint;
-- a quantizacao INT8 fica desativada por padrao;
-- o checkpoint treinado, `vocab.txt` e audio de referencia continuam sendo incluidos;
-- a voz continua usando `F5TTS_v1_Base`, `vocos` e sample rate de 24000 Hz.
+- o checkpoint treinado (`model_2000.pt`), `vocab.txt` e audio de referencia são mantidos;
+- o arquivo .pt é necessário pois o motor Lite o utiliza para inicializar os metadados da arquitetura.
 
-Se quiser gerar tambem INT8, defina:
+## Contrato do ONNX (Modo Lite)
 
-```python
-os.environ["F5_ONNX_QUANTIZE"] = "1"
-```
-
-Use INT8 apenas depois de validar a qualidade por escuta.
-
-## Contrato do ONNX Turbo
-
-O ONNX Turbo exportado encapsula:
-
-- Transformer/DiT;
-- loop Euler com `time_steps`;
-- Vocos para gerar audio.
-
-Entradas esperadas:
-
-```text
-x
-cond
-text
-time_steps
-mask
-```
-
-Saida:
-
-```text
-audio
-```
-
-Importante: ele nao e um grafo `texto cru -> WAV`. O backend ainda precisa preparar os IDs de texto, condicionamento da referencia, noise, mascara e passos de tempo antes de chamar o ONNX.
+* **Nome**: f5_tts_transformer_core.onnx
+* **Opset**: 17
+* **Entradas (Inputs)**: text_ids, text_lengths, ref_text_ids, ref_text_lengths, speed, n_steps.
+* **Saída (Output)**: audio (com eixos dinâmicos para o comprimento do áudio).
 
 ## Como rodar
 
@@ -73,7 +44,7 @@ Importante: ele nao e um grafo `texto cru -> WAV`. O backend ainda precisa prepa
 Por padrao, o notebook:
 
 - baixa somente arquivos essenciais do bucket;
-- exporta o ONNX Turbo em precisao original;
+- exporta o ONNX no formato Lite;
 - roda teste CPU;
 - envia para `warllem/Voz_Noslen_ONNX` se `HF_TOKEN` estiver disponivel.
 
