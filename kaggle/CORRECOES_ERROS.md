@@ -15,3 +15,18 @@
 Para evitar que este erro se repita, ao embutir scripts Python em strings de listas de notebooks, deve-se:
 *   Usar ferramentas de automação para gerar o JSON do notebook a partir do arquivo `.py` em vez de edição manual do JSON.
 *   Validar o script `.py` gerado localmente antes de publicar o notebook.
+
+---
+
+## Erro Identificado (Novo)
+**Tipo:** `TorchExportError` / `GuardOnDataDependentSymNode`
+**Local:** `kaggle/f5_tts_onnx_packager_kaggle.py` (Exportação ONNX)
+**Mensagem:** `Could not guard on data-dependent expression u0 + 6 < 7`.
+**Causa:** O novo exportador ONNX do PyTorch (baseado em Dynamo/torch.export) não conseguia validar se o comprimento da sequência de áudio era válido para as operações de convolução interna do modelo `Vocos`. Isso ocorre devido ao uso de formas simbólicas (dynamic shapes) que dependem de cálculos em tempo de execução (`text_ids.shape[1]` e `speed`).
+
+## Ação Tomada
+1.  **Hints para o Exportador:** Adicionei chamadas `torch._check()` dentro do método `forward` do wrapper. Estas chamadas servem como "garantias" estáticas para o exportador simbólico, confirmando que o comprimento da sequência sempre satisfará as restrições matemáticas do modelo (`mel.shape[2] + 6 >= 7`).
+2.  **Sincronização:** Atualizei tanto o script `.py` quanto a versão embutida no notebook `.ipynb`.
+
+## Prevenção
+Sempre que utilizar o novo exportador ONNX do PyTorch com modelos que possuam lógica condicional ou restrições de tamanho (como convoluções com kernels específicos), utilize `torch._check` para fornecer metadados sobre as dimensões dinâmicas.

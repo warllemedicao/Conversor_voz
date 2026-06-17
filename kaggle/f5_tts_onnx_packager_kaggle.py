@@ -615,6 +615,12 @@ def export_f5_lite_to_onnx(
 
             # Decode mel to audio (Vocos)
             mel = x.transpose(1, 2)
+            
+            # Correcao para TorchExportError: GuardOnDataDependentSymNode
+            # Ajuda o exportador a garantir que o comprimento seja suficiente para as convolucoes do Vocos
+            torch._check(mel.shape[2] >= 1)
+            torch._check(mel.shape[2] + 6 >= 7) 
+            
             return self.vocoder.decode(mel)
 
     device = "cpu"
