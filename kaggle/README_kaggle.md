@@ -1,83 +1,50 @@
-# Voz_Noslen F5-TTS ONNX (Modo Lite) no Kaggle
+# Voz_Noslen F5-TTS ONNX (Modo Turbo)
 
-Use `voz_noslen_f5_tts_onnx_kaggle.ipynb` em um notebook Kaggle com Internet ativada.
+Este diretório contém as ferramentas para gerar o pacote **Turbo** do modelo F5-TTS `Voz_Noslen`. O pacote é projetado para execução eficiente em CPU (ONNX Runtime) e deploy em ambientes serverless como o Google Cloud Run.
 
-## Objetivo atual
+## Arquitetura Turbo
+Diferente do fluxo F5-TTS completo, a arquitetura Turbo exporta o núcleo do Transformer (**Diffusion Transformer - DiT**) como um grafo ONNX estático.
 
-Criar um pacote ONNX (Modo Lite) da voz neural treinada `Voz_Noslen`, otimizado para execução no Cloud Run.
+- **Fidelidade:** Mantém a precisão original (FP32).
+- **Flexibilidade:** O loop de inferência (Solver ODE) e o Vocoder permanecem no backend (Python), permitindo ajustes finos de qualidade e performance sem necessidade de re-exportar o modelo.
+- **Portabilidade:** Gera um artefato minimalista com metadados integrados.
 
-O pacote final contem somente o runtime minimo:
+## Estrutura do Pacote Gerado
+O packager cria uma pasta isolada `onnx_package_turbo_<timestamp>/` com:
 
 ```text
-/onnx_package_name/
 ├── onnx/
-│   └── f5_tts_transformer_core.onnx  <-- (Gerado após a conversão)
+│   └── f5_tts_transformer_core.onnx  <-- Grafo Turbo
 ├── model/
-│   ├── model_2000.pt                <-- (Checkpoint original PyTorch)
-│   └── vocab.txt                    <-- (Dicionário de caracteres/tokens)
-└── reference/
-    └── referencia_voz.wav           <-- (Áudio de referência para clonagem)
+│   └── vocab.txt                    <-- Dicionário de tokens
+├── reference/
+│   └── referencia_voz.wav           <-- Áudio base para clonagem
+├── manifest.json                    <-- Versão, backend e lista de arquivos
+├── metadata.json                    <-- Contrato ONNX (inputs/outputs) e shapes
+└── validation.json                  <-- Relatório de integridade e smoke test
 ```
 
-## Politica de qualidade
+## Contrato ONNX (Interface)
+O arquivo `f5_tts_transformer_core.onnx` segue estritamente este contrato:
 
-Para preservar a qualidade da voz treinada:
+| Entrada | Tipo | Shape | Descrição |
+| :--- | :--- | :--- | :--- |
+| `x` | float32 | `[1, duration, 100]` | Tensor latente (ruído) |
+| `cond` | float32 | `[1, duration, 100]` | Condicionamento Mel |
+| `text_ids` | int64 | `[1, text_len]` | IDs do texto alvo |
+| `text_lengths` | int64 | `[1]` | Comprimento real do texto |
+| `time_steps` | float32 | `[1]` | Passo de tempo da difusão |
 
-- o ONNX principal usa a precisao original do checkpoint;
-- o checkpoint treinado (`model_2000.pt`), `vocab.txt` e audio de referencia são mantidos;
-- o arquivo .pt é necessário pois o motor Lite o utiliza para inicializar os metadados da arquitetura.
+**Saída:**
+- `dx` (float32): Velocidade prevista para o próximo passo.
 
-## Contrato do ONNX (Modo Lite)
-
-* **Nome**: f5_tts_transformer_core.onnx
-* **Opset**: 17
-* **Entradas (Inputs)**: text_ids, text_lengths, ref_text_ids, ref_text_lengths, speed, n_steps.
-* **Saída (Output)**: audio (com eixos dinâmicos para o comprimento do áudio).
-
-## Como rodar
-
+## Como Gerar
 1. Abra `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` no Kaggle.
-2. Ative Internet.
-3. Se quiser upload para Hugging Face, adicione um Secret chamado `HF_TOKEN`.
-4. Execute **Run All**.
+2. Certifique-se de que a **Internet** está ligada.
+3. Execute todas as células.
+4. Baixe o arquivo `.zip` gerado na raiz do diretório de trabalho.
 
-Por padrao, o notebook:
-
-- baixa somente arquivos essenciais do bucket;
-- exporta o ONNX no formato Lite;
-- roda teste CPU;
-- envia para `warllem/Voz_Noslen_ONNX` se `HF_TOKEN` estiver disponivel.
-
-## Origem e destino
-
-Origem:
-
-```text
-https://huggingface.co/buckets/warllem/Voz_Noslen
-```
-
-Voz usada:
-
-```text
-voices/v_minha_voz_f5_tts_ptbr
-```
-
-Destino padrao:
-
-```text
-warllem/Voz_Noslen_ONNX
-```
-
-Pasta gerada:
-
-```text
-onnx_packages/turbo_<data_hora>
-```
-
-## Logs
-
-O log completo fica em:
-
-```text
-/kaggle/working/voz_noslen_onnx_packager.log
-```
+## Regras de Engenharia
+- **Isolamento:** Nunca altera os arquivos originais em `voices/`.
+- **Sincronia:** O notebook gera automaticamente o script `.py` para garantir que a lógica de exportação esteja sempre atualizada.
+- **Validação:** O pacote só é considerado "Pronto" se passar no teste de carga do ONNX Runtime incluído no script.

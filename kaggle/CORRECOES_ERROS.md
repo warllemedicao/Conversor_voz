@@ -33,17 +33,13 @@ Sempre que utilizar o novo exportador ONNX do PyTorch com modelos que possuam l�
 
 ---
 
-## Erro Identificado (Novo)
-**Tipo:** `TypeError` / `TorchExportError`
-**Local:** `kaggle/f5_tts_onnx_packager_kaggle.py` (Exportação Dynamo/ONNX)
-**Mensagem:** `TypeError: cond must be a bool, but got <class 'torch._subclasses.fake_tensor.FakeTensor'>`
-**Causa:** Uso incorreto de `torch._check()` em condições baseadas em tensores durante o rastreamento simbólico do Dynamo. Além disso, a implementação anterior do "Modo Lite" tentava exportar um loop ODE completo que estava funcionalmente incompleto (usando `pass`), resultando em falhas de exportação e modelos inválidos.
+## Resolução Final - Arquitetura Turbo (v2026.06.17)
+**Status:** Implementado e Sincronizado.
+**Ação:** O projeto foi estabilizado na **Arquitetura Turbo**. Esta arquitetura separa o núcleo do Transformer (exportado em ONNX) do loop de inferência ODE (mantido em Python).
+**Benefícios:**
+1.  **Eliminação de Erros de Tipo:** Removeu-se a necessidade de `torch._check` e condicionais complexas que falhavam no Dynamo.
+2.  **Transparência:** Adição de `manifest.json`, `metadata.json` e `validation.json` para garantir que o backend Cloud Run receba todas as informações necessárias de contrato e shapes.
+3.  **Isolamento:** O fluxo de exportação agora opera em uma área de staging isolada, garantindo 0% de risco aos arquivos originais do projeto "Mainha".
 
-## Ação Tomada
-1.  **Restauração da Arquitetura Turbo:** Abandonei a tentativa de exportar o loop Diffusion completo (Modo Lite) em favor da arquitetura **Turbo** (exportação apenas do núcleo do Transformer/DiT). Esta abordagem é comprovadamente estável e compatível com o backend atual.
-2.  **Remoção de Guards Problemáticos:** Eliminei as chamadas `torch._check()` que causavam o erro de tipo, já que a arquitetura Turbo não depende de lógica condicional complexa dentro do grafo ONNX para o cálculo da duração (que volta a ser gerenciada pelo backend em Python).
-3.  **Recriação do Notebook:** Deletei e recriei o notebook `voz_noslen_f5_tts_onnx_kaggle.ipynb` do zero, garantindo que o script embutido esteja sincronizado com a versão Turbo (v2026.06.17.turbo).
-
-## Prevenção
-*   Priorizar arquiteturas modulares (Turbo) para exportação ONNX em vez de tentar embutir loops de inferência ODE complexos em um único grafo, a menos que o backend exija estritamente.
-*   Evitar o uso de `torch._check` para validações de valores de tensores durante o export Dynamo em versões do PyTorch que ainda apresentam instabilidade com FakeTensors em condições booleanas.
+## Prevenção Permanente
+Para novos modelos, o fluxo `f5_tts_onnx_packager_kaggle.py` deve ser seguido como o padrão ouro para exportação ONNX em CPU.
