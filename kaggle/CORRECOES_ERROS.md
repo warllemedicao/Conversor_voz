@@ -30,3 +30,20 @@ Para evitar que este erro se repita, ao embutir scripts Python em strings de lis
 
 ## Prevenção
 Sempre que utilizar o novo exportador ONNX do PyTorch com modelos que possuam lógica condicional ou restrições de tamanho (como convoluções com kernels específicos), utilize `torch._check` para fornecer metadados sobre as dimensões dinâmicas.
+
+---
+
+## Erro Identificado (Novo)
+**Tipo:** `JSON SyntaxError`
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb`
+**Mensagem:** `Invalid control character` (JSON Inválido).
+**Causa:** Uma edição anterior via ferramenta de substituição falhou ao incluir os caracteres de escape e finalização de string JSON (`\n",`) no final de um bloco de código, resultando em um arquivo `.ipynb` corrompido que não podia ser aberto por ferramentas de notebook.
+
+## Ação Tomada
+1.  **Validação JSON:** Utilizei `python -m json.tool` para identificar o ponto exato da quebra no JSON.
+2.  **Correção Estrutural:** Restaurei a sintaxe correta do array `source` no arquivo `.ipynb`.
+3.  **Verificação:** Validei que o JSON agora é válido e que o script `.py` standalone também está correto.
+
+## Prevenção
+*   Sempre validar o JSON de arquivos `.ipynb` após edições programáticas.
+*   Utilizar ferramentas que respeitem a estrutura de arquivos específicos ao realizar substituições em massa.
