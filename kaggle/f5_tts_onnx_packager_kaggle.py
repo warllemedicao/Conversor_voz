@@ -18,8 +18,8 @@ from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_REVISION = "main"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
-PACKAGER_VERSION = "2026.06.17.lite"
-DEFAULT_TEST_TEXT = "Boa noite Warllem, este é um teste do modo lite em Cloud Run."
+PACKAGER_VERSION = "2026.06.17.turbo"
+DEFAULT_TEST_TEXT = "Boa noite Warllem, este é um teste do modo turbo em Cloud Run."
 
 
 def resolve_work_root() -> Path:
@@ -567,7 +567,7 @@ def quantize_onnx_model(input_path: Path, output_path: Path) -> None:
     LOGGER.info("Quantizacao INT8 concluida.")
 
 
-def export_f5_lite_to_onnx(
+def export_f5_turbo_to_onnx(
     checkpoint_path: Path,
     vocab_path: Path,
     reference_audio_path: Path,
@@ -577,60 +577,29 @@ def export_f5_lite_to_onnx(
     import gc
     import torch
     import torchaudio
-    from f5_tts.infer.utils_infer import load_model, load_vocoder, preprocess_ref_audio_text
+    from f5_tts.infer.utils_infer import load_model, load_vocoder
     from hydra.utils import get_class
 
-    class F5TTSLiteWrapper(torch.nn.Module):
+    class F5TTSTurboWrapper(torch.nn.Module):
         """
-        Wrapper Modo Lite para Cloud Run.
-        Entradas: text_ids, text_lengths, ref_text_ids, ref_text_lengths, speed, n_steps.
-        Saida: audio.
+        Wrapper Modo Turbo para Cloud Run.
+        Inputs: x, cond, text_ids, text_lengths, time_steps.
+        Output: dx.
         """
-        def __init__(self, model: Any, vocoder: Any, ref_mel: torch.Tensor, compute_dtype: Any) -> None:
+        def __init__(self, model: Any) -> None:
             super().__init__()
             self.transformer = getattr(model, "transformer", model)
-            self.vocoder = vocoder
-            self.register_buffer("ref_mel", ref_mel) # [1, ref_len, 100]
-            self.compute_dtype = compute_dtype
 
-        def forward(self, text_ids, text_lengths, ref_text_ids, ref_text_lengths, speed, n_steps):
-            # Contrato solicitado: text_ids, text_lengths, ref_text_ids, ref_text_lengths, speed, n_steps
-            batch = text_ids.shape[0]
-            ref_len = self.ref_mel.shape[1]
-            
-            # Estimativa de duracao
-            target_len = torch.clamp((text_ids.shape[1] * 10 / speed).to(torch.int32), min=32, max=2048)
-            torch._check(target_len >= 32)
-            
-            # Placeholder do loop Euler para exportar o grafo com o contrato correto
-            # O motor Lite espera que o DiT seja chamado iterativamente ou que o loop esteja aqui.
-            # Aqui embutimos o loop minimo para tracer.
-            x = torch.randn(batch, target_len, 100, device=text_ids.device).to(self.compute_dtype)
-            
-            # O motor Lite real utilizaria o transformer aqui. 
-            # Como estamos emulando o exportador original:
-            steps = n_steps.item()
-            for i in range(1): # Tracer loop
-                # v = self.transformer(...)
-                pass
-
-            # Decode mel to audio (Vocos)
-            mel = x.transpose(1, 2)
-            
-            # Correcao para TorchExportError: GuardOnDataDependentSymNode
-            # Ajuda o exportador a garantir que o comprimento seja suficiente para as convolucoes do Vocos
-            torch._check(mel.shape[2] >= 32)
-            
-            return self.vocoder.decode(mel)
+        def forward(self, x, cond, text_ids, text_lengths, time_steps):
+            return self.transformer(x, cond, text_ids, time_steps, text_lengths)
 
     device = "cpu"
     config = build_default_f5_config(manifest)
     model_cls = get_class(f"f5_tts.model.{config['backbone']}")
     onnx_path = onnx_dir / "f5_tts_transformer_core.onnx"
 
-    LOGGER.info("Carregando modelos para exportacao Modo Lite (Opset 17)")
+    LOGGER.info("Carregando modelo para exportacao Modo Turbo (Opset 17)")
 
-    vocoder = load_vocoder(vocoder_name=config["mel_spec"]["mel_spec_type"], is_local=False, device=device)
     model = load_model(
         model_cls,
         config["arch"],
@@ -641,41 +610,36 @@ def export_f5_lite_to_onnx(
         device=device,
     )
     model.eval()
-    dtype = infer_module_float_dtype(model)
 
-    # Simular ref_mel para o exportador
-    ref_mel = torch.randn(1, 128, 100) 
-
-    wrapped = F5TTSLiteWrapper(model, vocoder, ref_mel, dtype).to(device).eval()
+    wrapped = F5TTSTurboWrapper(model).to(device).eval()
 
     # Inputs de exemplo para o tracer
     example_inputs = (
-        torch.randint(0, 100, (1, 64), dtype=torch.int64), # text_ids
-        torch.tensor([64], dtype=torch.int64),            # text_lengths
-        torch.randint(0, 100, (1, 64), dtype=torch.int64), # ref_text_ids
-        torch.tensor([64], dtype=torch.int64),            # ref_text_lengths
-        torch.tensor([1.0], dtype=torch.float32),         # speed
-        torch.tensor([8], dtype=torch.int64),              # n_steps
+        torch.randn(1, 128, 100),          # x
+        torch.randn(1, 128, 100),          # cond
+        torch.randint(0, 100, (1, 64)),     # text_ids
+        torch.tensor([64]),                # text_lengths
+        torch.tensor([0.5]),               # time_steps
     )
 
-    LOGGER.info("Exportando ONNX Lite: %s", onnx_path.name)
+    LOGGER.info("Exportando ONNX Turbo: %s", onnx_path.name)
     torch.onnx.export(
         wrapped,
         example_inputs,
         str(onnx_path),
-        input_names=["text_ids", "text_lengths", "ref_text_ids", "ref_text_lengths", "speed", "n_steps"],
-        output_names=["audio"],
+        input_names=["x", "cond", "text_ids", "text_lengths", "time_steps"],
+        output_names=["dx"],
         dynamic_axes={
+            "x": {1: "duration"},
+            "cond": {1: "duration"},
             "text_ids": {1: "text_len"},
-            "ref_text_ids": {1: "ref_text_len"},
-            "audio": {1: "audio_samples"},
+            "dx": {1: "duration"},
         },
         opset_version=17,
         do_constant_folding=True,
     )
 
     del model
-    del vocoder
     gc.collect()
 
     return {"status": "ok", "onnx_file": onnx_path.name, "opset": 17}
@@ -1039,7 +1003,7 @@ def upload_package(paths: PackagePaths, repo_id: str, revision: str, hf_folder: 
 
 
 def package_voice(args: argparse.Namespace) -> None:
-    LOGGER.info("Voz_Noslen ONNX (Modo Lite) packager versao: %s", PACKAGER_VERSION)
+    LOGGER.info("Voz_Noslen ONNX (Modo Turbo) packager versao: %s", PACKAGER_VERSION)
     token = get_hf_token()
     upload_repo_id = args.upload_repo_id or args.repo_id
     revision = args.revision
@@ -1063,12 +1027,12 @@ def package_voice(args: argparse.Namespace) -> None:
     if not reference_audio_path:
         raise FileNotFoundError("Audio de referencia obrigatorio nao encontrado.")
 
-    # 1. Copiar arquivos base para a estrutura Lite
+    # 1. Copiar arquivos base para a estrutura Turbo
     runtime_files = copy_required_runtime_files(paths, checkpoint_path, vocab_path, reference_audio_path, reference_text)
     
-    # 2. Executar exportacao ONNX Lite
+    # 2. Executar exportacao ONNX Turbo
     try:
-        export_report = export_f5_lite_to_onnx(checkpoint_path, vocab_path, reference_audio_path, paths.onnx_dir, manifest)
+        export_report = export_f5_turbo_to_onnx(checkpoint_path, vocab_path, reference_audio_path, paths.onnx_dir, manifest)
         paths.export_report_path.write_text(json.dumps(export_report, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
         LOGGER.error("Exportacao ONNX falhou: %s", exc)
@@ -1095,7 +1059,7 @@ def package_voice(args: argparse.Namespace) -> None:
     else:
         LOGGER.info("Upload desativado. Pacote local pronto em %s", paths.staging_root)
 
-    LOGGER.info("Pacote final Modo Lite concluido em: %s", paths.staging_root)
+    LOGGER.info("Pacote final Modo Turbo concluido em: %s", paths.staging_root)
     LOGGER.info("Pasta alvo no Hugging Face: %s", hf_folder)
 
 
