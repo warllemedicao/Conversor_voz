@@ -600,6 +600,7 @@ def export_f5_lite_to_onnx(
             
             # Estimativa de duracao
             target_len = torch.clamp((text_ids.shape[1] * 10 / speed).to(torch.int32), min=32, max=2048)
+            torch._check(target_len >= 32)
             
             # Placeholder do loop Euler para exportar o grafo com o contrato correto
             # O motor Lite espera que o DiT seja chamado iterativamente ou que o loop esteja aqui.
@@ -618,8 +619,7 @@ def export_f5_lite_to_onnx(
             
             # Correcao para TorchExportError: GuardOnDataDependentSymNode
             # Ajuda o exportador a garantir que o comprimento seja suficiente para as convolucoes do Vocos
-            torch._check(mel.shape[2] >= 1)
-            torch._check(mel.shape[2] + 6 >= 7) 
+            torch._check(mel.shape[2] >= 32)
             
             return self.vocoder.decode(mel)
 

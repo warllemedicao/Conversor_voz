@@ -58,6 +58,9 @@ O arquivo `model_2000.pt` é mantido no pacote final, pois o backend Lite o util
 ### 3. Simplificação do Pacote
 Remoção de scripts e manifestos extras que não são utilizados pelo motor Lite, focando na estrutura de pastas `onnx/`, `model/` e `reference/`.
 
+### 4. Correção TorchExportError (GuardOnDataDependentSymNode)
+Implementação de dicas simbólicas (`torch._check`) no wrapper de exportação para garantir que o comprimento dinâmico do áudio atenda às restrições das camadas de convolução do vocoder Vocos durante a exportação via Dynamo.
+
 ## Variaveis principais
 
 ```text
