@@ -105,3 +105,18 @@ Para novos modelos, o fluxo `f5_tts_onnx_packager_kaggle.py` deve ser seguido co
 
 ## Prevenção
 Quando a URL de origem estiver em `/buckets/...`, não usar `snapshot_download`. Buckets devem ser baixados pela própria árvore `/buckets/<owner>/<bucket>/tree/<prefix>` e pelos links `/resolve/...`; `snapshot_download` deve ficar restrito a repositórios Hub de `model`, `dataset` ou `space`.
+
+---
+
+## Erro Identificado (Novo - 2026-06-18)
+**Tipo:** `ModuleNotFoundError`
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` (Célula 4 - Execução da Conversão e Empacotamento)
+**Mensagem:** `ModuleNotFoundError: No module named 'onnxscript'` ao executar `torch.onnx.export`.
+**Causa:** A célula 1 do notebook instalava `onnx` e `onnxruntime`, mas não instalava `onnxscript`. Em versões recentes do PyTorch, o módulo interno de exportação ONNX importa `onnxscript` mesmo quando a chamada é feita pela API `torch.onnx.export`, causando falha antes da exportação do grafo.
+
+## Ação Tomada
+1. **Dependência Adicionada no Notebook:** Atualizei a célula 1 para instalar explicitamente `onnxscript` junto com `onnx` e `onnxruntime`.
+2. **Diagnóstico dos Avisos:** Os `SyntaxWarning` emitidos por `pydub` são avisos de regex de dependência externa e não interrompem a execução; o erro bloqueante era apenas a ausência de `onnxscript`.
+
+## Prevenção
+Sempre manter `onnxscript` instalado no ambiente Kaggle quando o fluxo usa `torch.onnx.export` com PyTorch 2.x. Se a célula de instalação for editada manualmente, ela deve permanecer sincronizada com `kaggle/conversor_voz_requirements_kaggle.txt`.
