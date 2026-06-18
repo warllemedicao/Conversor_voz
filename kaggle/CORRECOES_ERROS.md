@@ -48,6 +48,21 @@ Para repositórios privados ou controlados do Hugging Face executados no Kaggle,
 
 ---
 
+## Erro Identificado (Novo)
+**Tipo:** `HTTPStatusError` / `RepositoryNotFoundError` (404 Not Found)
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` (Célula de Download dos Ativos)
+**Mensagem:** `Client error '404 Not Found' for url 'https://huggingface.co/api/models/warllem/Voz_Noslen/revision/main'`
+**Causa:** No ecossistema do Hugging Face Hub, se um token é enviado mas não possui permissão de acesso ao repositório privado específico ou se o token está em branco/inválido, a API do Hugging Face responde intencionalmente com `404 Not Found` (em vez de 401) para ocultar a existência do repositório privado. No Kaggle, isso costuma ocorrer quando os "Secrets" estão cadastrados na conta, mas o usuário esqueceu de marcar a caixinha de verificação para habilitar esse Segredo específico dentro do notebook atual em execução.
+
+## Ação Tomada
+1. **Mensagens de Diagnóstico Embutidas:** Inseri um bloco de validação visual e inteligência no notebook. Agora ele imprime se o token foi encontrado e o seu comprimento numérico real, sem expor os caracteres confidenciais.
+2. **Alertas e Dicas Acionáveis:** Caso o token não seja carregado (retornando vazio ou gerando exceção devido a não-autorização de add-ons), o código exibe instruções passo a passo instruindo o usuário a acessar o menu `Add-ons` -> `Secrets` no painel lateral do Kaggle e ativar o botão de seleção do `HF_TOKEN` para este notebook específico.
+
+## Prevenção
+Sempre que utilizar segredos no Kaggle para autenticação de repositórios privados, inclua blocos de sanidade e instruções interativas de interface (`Add-ons -> Secrets`) para guiar a configuração correta do ambiente de runtime.
+
+---
+
 ## Resolução Final - Arquitetura Turbo (v2026.06.17)
 **Status:** Implementado e Sincronizado.
 **Ação:** O projeto foi estabilizado na **Arquitetura Turbo**. Esta arquitetura separa o núcleo do Transformer (exportado em ONNX) do loop de inferência ODE (mantido em Python).
