@@ -120,3 +120,21 @@ Quando a URL de origem estiver em `/buckets/...`, não usar `snapshot_download`.
 
 ## Prevenção
 Sempre manter `onnxscript` instalado no ambiente Kaggle quando o fluxo usa `torch.onnx.export` com PyTorch 2.x. Se a célula de instalação for editada manualmente, ela deve permanecer sincronizada com `kaggle/conversor_voz_requirements_kaggle.txt`.
+
+---
+
+## Correção de Finalização e Upload Automático - 2026-06-18
+**Tipo:** pacote marcado como pronto sem garantia de ONNX válido e ausência de upload automático.
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb`, `kaggle/f5_tts_onnx_packager_kaggle.py` e `kaggle/README_kaggle.md`.
+**Sintoma:** O notebook podia imprimir `PACOTE TURBO PRONTO` apenas porque `/kaggle/working/turbo_staging_area` existia, mesmo quando a exportação ONNX falhava antes de gerar `onnx/f5_tts_transformer_core.onnx`. Além disso, o fluxo final ainda dependia de download manual do `.zip`, sem criação de destino nem upload direto para o Hugging Face.
+
+## Ação Tomada
+1. **Validação antes do ZIP:** A célula final agora exige a presença de `onnx/f5_tts_transformer_core.onnx` e `validation.json` com `status: verified` antes de compactar o pacote.
+2. **Upload direto para Hugging Face:** A célula final usa `huggingface_hub.HfApi` para criar o repositório de destino com `create_repo(..., exist_ok=True)` e enviar o `.zip` com `upload_file`.
+3. **Pasta remota automática:** A pasta no Hugging Face é criada pelo próprio `path_in_repo`, com padrão `turbo/<arquivo.zip>`.
+4. **Configuração por ambiente:** O destino pode ser controlado por `HF_UPLOAD_REPO_ID`, `HF_UPLOAD_REPO_TYPE`, `HF_UPLOAD_FOLDER` e `HF_PRIVATE_REPO`; o padrão é `warllem/Voz_Noslen_Turbo`, `model`, `turbo/`, privado.
+5. **Token obrigatório:** O upload falha explicitamente se `HF_TOKEN` não estiver disponível ou estiver vazio nos Secrets do Kaggle.
+6. **Contorno do Torch Export:** O `torch.onnx.export` passou a usar `dynamo=False`, evitando o caminho `torch.export` que gerava `TorchExportError` com `IndexError: Dimension out of range`.
+
+## Prevenção
+O pacote só deve ser considerado finalizado quando a validação ONNX passar e o upload imprimir `UPLOAD HUGGING FACE CONCLUIDO`. Mensagens de pacote pronto não devem depender apenas da existência da pasta de staging.

@@ -133,7 +133,7 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
             "x": {1: "duration"}, "cond": {1: "duration"},
             "text_ids": {1: "text_len"}, "dx": {1: "duration"}
         },
-        opset_version=17, do_constant_folding=True
+        opset_version=17, do_constant_folding=True, dynamo=False
     )
     
     del model

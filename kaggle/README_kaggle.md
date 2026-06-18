@@ -41,8 +41,27 @@ O arquivo `f5_tts_transformer_core.onnx` segue estritamente este contrato:
 ## Como Gerar
 1. Abra `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` no Kaggle.
 2. Certifique-se de que a **Internet** está ligada.
-3. Execute todas as células.
-4. Baixe o arquivo `.zip` gerado na raiz do diretório de trabalho.
+3. Habilite o secret `HF_TOKEN` em `Add-ons -> Secrets`.
+4. Execute todas as células.
+5. O notebook valida o ONNX, gera o `.zip` e faz upload direto para o Hugging Face.
+
+Destino padrão do upload:
+
+```text
+repo_id: warllem/Voz_Noslen_Turbo
+repo_type: model
+pasta: turbo/
+privado: sim
+```
+
+Esses valores podem ser alterados no Kaggle com variáveis de ambiente:
+
+```text
+HF_UPLOAD_REPO_ID
+HF_UPLOAD_REPO_TYPE
+HF_UPLOAD_FOLDER
+HF_PRIVATE_REPO
+```
 
 ## Regras de Engenharia
 - **Isolamento:** Nunca altera os arquivos originais em `voices/`.
