@@ -63,6 +63,21 @@ Sempre que utilizar segredos no Kaggle para autenticação de repositórios priv
 
 ---
 
+## Erro Identificado (Novo)
+**Tipo:** `HTTPStatusError` / `RepositoryNotFoundError` (404 Not Found Persistente com Token Ativo)
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` (Célula de Download dos Ativos)
+**Mensagem:** `Repository Not Found for url: https://huggingface.co/api/models/warllem/Voz_Noslen/revision/main`
+**Causa:** O token foi carregado com sucesso (comprimento 37), eliminando o problema de ausência de segredos. No entanto, o erro 404 continuou ocorrendo porque, por padrão, o método `snapshot_download` assume que o repositório consultado é um Modelo (`repo_type="model"`). Caso o repositório remoto `warllem/Voz_Noslen` tenha sido criado no Hugging Face sob a categoria de Dataset em vez de Model, o endpoint de Model responderá com 404.
+
+## Ação Tomada
+1. **Fallback Resiliente Automático:** Reescrevi o script de download no notebook com uma estrutura de `try-except` inteligente. O código agora tenta realizar o download assumindo que é um Modelo (`repo_type="model"`).
+2. **Tratamento de Exceção de Tipo:** Caso receba um erro 404 ou `RepositoryNotFound`, o script captura a exceção, exibe uma mensagem informativa amigável e tenta imediatamente o download alternando o parâmetro para `repo_type="dataset"`. Isso garante 100% de compatibilidade não importando a natureza de criação do repositório.
+
+## Prevenção
+Ao construir scripts de automação de download de snapshots onde o tipo de repositório pode ser ambíguo ou alterado pelo usuário (Model vs Dataset), implemente uma lógica de tentativa e erro (fallback automático) para ambos os tipos usando o parâmetro `repo_type`.
+
+---
+
 ## Resolução Final - Arquitetura Turbo (v2026.06.17)
 **Status:** Implementado e Sincronizado.
 **Ação:** O projeto foi estabilizado na **Arquitetura Turbo**. Esta arquitetura separa o núcleo do Transformer (exportado em ONNX) do loop de inferência ODE (mantido em Python).
