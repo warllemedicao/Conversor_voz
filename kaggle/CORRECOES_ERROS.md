@@ -88,3 +88,20 @@ Ao construir scripts de automação de download de snapshots onde o tipo de repo
 
 ## Prevenção Permanente
 Para novos modelos, o fluxo `f5_tts_onnx_packager_kaggle.py` deve ser seguido como o padrão ouro para exportação ONNX em CPU.
+
+---
+
+## Erro Identificado (Novo - 2026-06-18)
+**Tipo:** `RepositoryNotFoundError` / fonte Hugging Face incorreta para o mecanismo de download
+**Local:** `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` (Célula de Download dos Ativos) e `kaggle/f5_tts_onnx_packager_kaggle.py` (constante de origem)
+**Mensagem:** `Repository Not Found` ao tentar baixar `warllem/Voz_Noslen` via `snapshot_download`, apesar de a URL pública `https://huggingface.co/buckets/warllem/Voz_Noslen` responder corretamente.
+**Causa:** A origem correta é um **Hugging Face Storage Bucket** (`/buckets/warllem/Voz_Noslen`), não um repositório Hub do tipo `model` ou `dataset`. A função `snapshot_download` consulta APIs de repositório (`/api/models` ou `/api/datasets`) e, por isso, não acessa o namespace de buckets. A análise da página do bucket confirmou a árvore `voices/v_minha_voz_f5_tts_ptbr` com arquivos expostos por links `/buckets/warllem/Voz_Noslen/resolve/...`.
+
+## Ação Tomada
+1. **Origem Corrigida:** Restaurei `DEFAULT_SOURCE_URL` para a URL completa do bucket: `https://huggingface.co/buckets/warllem/Voz_Noslen`.
+2. **Downloader Correto para Bucket:** Substituí a célula de `snapshot_download` do notebook por um downloader recursivo que lê a listagem `BucketFileList`, percorre diretórios e baixa arquivos pelos links `/resolve/<path>?download=true`.
+3. **Compatibilidade com Bucket Privado:** Mantive o suporte ao `HF_TOKEN` via variável de ambiente ou Kaggle Secrets, enviando `Authorization: Bearer <token>` nas requisições do bucket.
+4. **Preservação da Estrutura:** O download continua materializando os arquivos em `/kaggle/working/turbo_source_snapshot/voices/v_minha_voz_f5_tts_ptbr`, que é o caminho esperado pelo packager.
+
+## Prevenção
+Quando a URL de origem estiver em `/buckets/...`, não usar `snapshot_download`. Buckets devem ser baixados pela própria árvore `/buckets/<owner>/<bucket>/tree/<prefix>` e pelos links `/resolve/...`; `snapshot_download` deve ficar restrito a repositórios Hub de `model`, `dataset` ou `space`.

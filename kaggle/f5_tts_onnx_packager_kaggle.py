@@ -216,7 +216,7 @@ def main():
     LOGGER.info(f"=== Voz_Noslen Turbo Packager {PACKAGER_VERSION} ===")
     
     # Simulação de localização de arquivos (No Kaggle isso viria do download)
-    # Aqui assumimos que o snapshot_download já foi feito pelo notebook
+    # Aqui assumimos que o download do bucket HF já foi feito pelo notebook
     source_root = DOWNLOAD_DIR
     paths = clean_and_make_paths()
 
