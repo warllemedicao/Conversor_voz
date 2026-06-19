@@ -181,3 +181,22 @@ Não passar parâmetros opcionais do F5-TTS por posição no wrapper ONNX. Para 
 
 ## Prevenção
 Sempre que o wrapper depender de comportamento interno do F5-TTS, registrar a assinatura real do método chamado no ambiente Kaggle e passar máscaras com shape explícito `[batch, duration]`.
+
+---
+
+## Erro Identificado (Novo - 2026-06-19, terceira execução)
+**Tipo:** falha de validação ONNX Runtime / `Concat` com shapes incompatíveis
+**Local:** `validate_package()` em `kaggle/f5_tts_onnx_packager_kaggle.py`
+**Mensagem:** `Non concat axis dimensions must match: Axis 1 has mismatched dimensions of 128 and 16` no nó `/transformer/input_embed/Concat`.
+**Causa:** A exportação ONNX foi concluída, mas o smoke test alimentava `x` e `cond` com duração `16`. Durante o trace, o F5-TTS converte `seq_len.max().item()` em inteiro Python dentro de `TextEmbedding.forward`; isso especializa o caminho interno do texto em `128` frames, que era a duração usada nos inputs de exemplo da exportação. Assim, na validação, `x/cond` tinham eixo temporal `16` e `text_embed` tinha eixo temporal `128`, causando falha no `Concat`.
+
+## Ação Tomada
+1. **Contrato fixo de duração:** Adicionado `TURBO_DURATION = 128`.
+2. **Dynamic axes corrigidos:** Removido eixo dinâmico de `x`, `cond` e `dx`; apenas `text_ids` mantém `text_len` dinâmico.
+3. **Metadata corrigido:** `metadata.json` agora declara `x`, `cond` e `dx` como `[1, 128, 100]` e inclui restrição `duration=128`.
+4. **Smoke test corrigido:** A validação ONNX Runtime agora alimenta `x` e `cond` com `[1, 128, 100]` e verifica se `dx` retorna exatamente `(1, 128, 100)`.
+5. **Versão atualizada:** O packager passou para `2026.06.19.turbo.v5`.
+6. **Sincronização:** O notebook Kaggle foi atualizado para gerar a versão v5 do script.
+
+## Prevenção
+Enquanto o exportador usado for o tracer legado (`dynamo=False`) e o F5-TTS usar `seq_len.max().item()` no caminho do texto, não declarar `duration` como dinâmico no ONNX. O backend deve chamar o grafo Turbo em blocos de 128 frames.

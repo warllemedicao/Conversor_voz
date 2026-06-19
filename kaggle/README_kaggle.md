@@ -1,6 +1,6 @@
 # Voz_Noslen F5-TTS ONNX (Modo Turbo)
 
-Versão atual do packager: `2026.06.19.turbo.v4`.
+Versão atual do packager: `2026.06.19.turbo.v5`.
 
 Este diretório contém as ferramentas para gerar o pacote **Turbo** do modelo F5-TTS `Voz_Noslen`. O pacote é projetado para execução eficiente em CPU (ONNX Runtime) e deploy em ambientes serverless como o Google Cloud Run.
 
@@ -31,14 +31,16 @@ O arquivo `f5_tts_transformer_core.onnx` segue estritamente este contrato:
 
 | Entrada | Tipo | Shape | Descrição |
 | :--- | :--- | :--- | :--- |
-| `x` | float32 | `[1, duration, 100]` | Tensor latente (ruído) |
-| `cond` | float32 | `[1, duration, 100]` | Condicionamento Mel |
+| `x` | float32 | `[1, 128, 100]` | Tensor latente (ruído) |
+| `cond` | float32 | `[1, 128, 100]` | Condicionamento Mel |
 | `text_ids` | int64 | `[1, text_len]` | IDs do texto alvo |
 | `text_lengths` | int64 | `[1]` | Comprimento real do texto |
 | `time_steps` | float32 | `[1]` | Passo de tempo da difusão |
 
 **Saída:**
-- `dx` (float32): Velocidade prevista para o próximo passo.
+- `dx` (float32): Velocidade prevista para o próximo passo, shape `[1, 128, 100]`.
+
+Observação: na exportação ONNX via tracer legado, o F5-TTS fixa internamente o comprimento de áudio em `128` frames por causa de `seq_len.max().item()` no `TextEmbedding`. O backend deve processar/chunkar chamadas Turbo nesse tamanho.
 
 ## Como Gerar
 1. Abra `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb` no Kaggle.
@@ -71,3 +73,4 @@ HF_PRIVATE_REPO
 - **Validação:** O pacote só é considerado "Pronto" se passar no teste de carga do ONNX Runtime incluído no script.
 - **Contrato DiT:** O wrapper Turbo chama o Transformer com argumentos nomeados (`x`, `cond`, `text`, `time`). `text_lengths` permanece como entrada ONNX ancorada no grafo, mas não é passado como quinto argumento posicional para evitar que o F5-TTS o interprete como `drop_audio_cond`/máscara de áudio.
 - **Máscara de áudio:** O wrapper cria uma máscara 2D `[batch, duration]` a partir de `x` e a passa como `mask` quando a versão instalada do F5-TTS suporta esse argumento.
+- **Duração fixa:** A versão ONNX v5 usa `TURBO_DURATION=128`; não marcar `x`, `cond` ou `dx` como dinâmicos no ONNX.

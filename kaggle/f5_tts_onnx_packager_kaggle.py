@@ -15,9 +15,10 @@ from typing import Any
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 # Configurações de Caminhos e Versão
-PACKAGER_VERSION = "2026.06.19.turbo.v4"
+PACKAGER_VERSION = "2026.06.19.turbo.v5"
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
+TURBO_DURATION = 128
 
 def resolve_work_root() -> Path:
     configured = Path(os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working"))
@@ -133,8 +134,8 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
     
     # Exemplo de entrada para o tracer (FP32)
     example_inputs = (
-        torch.randn(1, 128, 100, dtype=torch.float32),       # x
-        torch.randn(1, 128, 100, dtype=torch.float32),       # cond
+        torch.randn(1, TURBO_DURATION, 100, dtype=torch.float32),       # x
+        torch.randn(1, TURBO_DURATION, 100, dtype=torch.float32),       # cond
         torch.randint(0, 100, (1, 64), dtype=torch.int64),   # text_ids
         torch.tensor([64], dtype=torch.int64),               # text_lengths
         torch.tensor([0.5], dtype=torch.float32),            # time_steps
@@ -146,8 +147,7 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
         input_names=["x", "cond", "text_ids", "text_lengths", "time_steps"],
         output_names=["dx"],
         dynamic_axes={
-            "x": {1: "duration"}, "cond": {1: "duration"},
-            "text_ids": {1: "text_len"}, "dx": {1: "duration"}
+            "text_ids": {1: "text_len"}
         },
         opset_version=17, do_constant_folding=True, dynamo=False
     )
@@ -168,11 +168,16 @@ def generate_metadata(paths: TurboPaths, source_info: dict):
             "dtype": "float32"
         },
         "shapes": {
-            "x": [1, "duration", 100],
-            "cond": [1, "duration", 100],
+            "x": [1, TURBO_DURATION, 100],
+            "cond": [1, TURBO_DURATION, 100],
             "text_ids": [1, "text_len"],
             "text_lengths": [1],
-            "time_steps": [1]
+            "time_steps": [1],
+            "dx": [1, TURBO_DURATION, 100]
+        },
+        "constraints": {
+            "duration": TURBO_DURATION,
+            "reason": "Legacy TorchScript ONNX trace specializes DiT text embedding length via seq_len.max().item()."
         },
         "engine": "ONNX Runtime CPU / Cloud Run Turbo Backend"
     }
@@ -211,13 +216,15 @@ def validate_package(paths: TurboPaths):
         
         # Teste de inferência dummy
         feeds = {
-            "x": np.random.randn(1, 16, 100).astype(np.float32),
-            "cond": np.random.randn(1, 16, 100).astype(np.float32),
+            "x": np.random.randn(1, TURBO_DURATION, 100).astype(np.float32),
+            "cond": np.random.randn(1, TURBO_DURATION, 100).astype(np.float32),
             "text_ids": np.zeros((1, 16), dtype=np.int64),
             "text_lengths": np.array([16], dtype=np.int64),
             "time_steps": np.array([0.5], dtype=np.float32)
         }
         outputs = sess.run(None, feeds)
+        if outputs[0].shape != (1, TURBO_DURATION, 100):
+            raise RuntimeError(f"dx shape inesperado: {outputs[0].shape}")
         report["checks"]["inference_smoke_test"] = "passed"
         report["status"] = "verified"
     except Exception as e:

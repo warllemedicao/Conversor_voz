@@ -9,7 +9,7 @@ Gerar, no Kaggle, um pacote Turbo para execução em backend Python com ONNX Run
 ## Versao atual
 
 ```text
-PACKAGER_VERSION=2026.06.19.turbo.v4
+PACKAGER_VERSION=2026.06.19.turbo.v5
 ```
 
 ## Arquivos sincronizados
@@ -40,13 +40,13 @@ turbo_staging_area/
 * **Arquivo:** `f5_tts_transformer_core.onnx`
 * **Opset:** 17
 * **Entradas:**
-    - `x`: tensor latente `float32`, shape `[1, duration, 100]`.
-    - `cond`: condicionamento mel `float32`, shape `[1, duration, 100]`.
+    - `x`: tensor latente `float32`, shape `[1, 128, 100]`.
+    - `cond`: condicionamento mel `float32`, shape `[1, 128, 100]`.
     - `text_ids`: IDs de texto `int64`, shape `[1, text_len]`.
     - `text_lengths`: comprimento de texto `int64`, shape `[1]`.
     - `time_steps`: tempo da difusao `float32`, shape `[1]`.
 * **Saida:**
-    - `dx`: velocidade prevista pelo Transformer, shape `[1, duration, 100]`.
+    - `dx`: velocidade prevista pelo Transformer, shape `[1, 128, 100]`.
 
 ## Correcao aplicada em 2026-06-19
 
@@ -71,6 +71,19 @@ A execucao seguinte no Kaggle ainda falhou durante `torch.onnx.export`, depois d
 - usa `LOGGER.exception` para imprimir traceback completo em novas falhas.
 
 Com isso, se o exportador entrar no caminho de `audio_mask.sum(dim=1)`, a máscara enviada pelo wrapper tem duas dimensoes e satisfaz o contrato esperado pelo DiT.
+
+## Correcao complementar em 2026-06-19 - validacao ONNX Runtime
+
+A execucao manual da celula 4 gerou o ONNX, mas a validacao falhou no ONNX Runtime:
+
+```text
+Concat node /transformer/input_embed/Concat
+Non concat axis dimensions must match: Axis 1 has mismatched dimensions of 128 and 16
+```
+
+A causa foi o tracer legado do PyTorch especializar o comprimento interno do `TextEmbedding` em `128` frames por causa de `seq_len.max().item()`, enquanto o smoke test ainda alimentava `x` e `cond` com `16` frames. A versao `2026.06.19.turbo.v5` assume explicitamente `TURBO_DURATION=128`, remove eixo dinâmico de `x`, `cond` e `dx`, atualiza o metadata e roda o smoke test com `[1, 128, 100]`.
+
+Essa versao gera um ONNX valido para chamadas Turbo de 128 frames. O backend deve dividir ou preencher os tensores nesse tamanho antes de chamar o grafo.
 
 ## Criterio para upload
 
