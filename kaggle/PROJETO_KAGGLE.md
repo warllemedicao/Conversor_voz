@@ -48,6 +48,5 @@ Este contrato nao e text-to-audio end-to-end. O Lite CPU precisa manter em Pytho
 - `f5_tts_onnx_packager_kaggle.py`: packager canonico.
 - `voz_noslen_f5_tts_onnx_kaggle.ipynb`: notebook canonico.
 - `conversor_voz_kaggle.py`: alias para compatibilidade.
-- `conversor_voz_kaggle.ipynb`: alias do notebook canonico.
 - `README_kaggle.md`: guia operacional.
 - `RELATORIO_VOZ_NOSLEN_ONNX.md`: historico tecnico de correcoes.

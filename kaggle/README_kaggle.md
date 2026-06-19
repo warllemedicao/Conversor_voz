@@ -98,4 +98,3 @@ Os arquivos canônicos atuais são:
 Também existem aliases de compatibilidade:
 
 - `kaggle/conversor_voz_kaggle.py`
-- `kaggle/conversor_voz_kaggle.ipynb`
