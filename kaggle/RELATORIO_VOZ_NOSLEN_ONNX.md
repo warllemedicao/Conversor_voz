@@ -9,7 +9,7 @@ Gerar, no Kaggle, um pacote Turbo para execução em backend Python com ONNX Run
 ## Versao atual
 
 ```text
-PACKAGER_VERSION=2026.06.19.turbo.v5
+PACKAGER_VERSION=2026.06.19.turbo.v6
 ```
 
 ## Arquivos sincronizados
@@ -85,6 +85,21 @@ A causa foi o tracer legado do PyTorch especializar o comprimento interno do `Te
 
 Essa versao gera um ONNX valido para chamadas Turbo de 128 frames. O backend deve dividir ou preencher os tensores nesse tamanho antes de chamar o grafo.
 
+## Correcao complementar em 2026-06-19 - contrato Lite CPU explicito
+
+A versao `2026.06.19.turbo.v6` deixa o contrato alinhado ao uso no Lite CPU:
+
+- o ONNX continua cobrindo apenas o nucleo DiT/F5-TTS (`x`, `cond`, `text_ids`, `text_lengths`, `time_steps` -> `dx`);
+- `metadata.json` marca o pacote como `partial-core-onnx` e `not_end_to_end=true`;
+- `manifest.json` usa `backend=lite-cpu-partial-onnx` e `onnx_scope=f5_tts_dit_core_only`;
+- a descoberta de ativos valida `vocab.txt`, audio de referencia e checkpoint antes da exportacao;
+- a selecao de checkpoint agora segue ordem deterministica: manifesto fonte, `model_last.pt`, maior `model_*.pt`;
+- `validation.json` separa `onnx_core` de `full_pipeline`;
+- o smoke test ONNX Runtime registra inputs, outputs, shape de `dx` e tempo de inferencia do core em CPU;
+- o smoke test do pipeline completo gera `validation/full_pipeline_smoke.wav` com o F5-TTS PyTorch + Vocos, mantendo sample rate esperado de 24000 Hz.
+
+O pacote so deve ser promovido quando os dois escopos passarem: ONNX core verificado e WAV Python gerado. Isso evita tratar o ONNX parcial como export end-to-end.
+
 ## Criterio para upload
 
 O upload so deve ser considerado seguro quando:
@@ -94,6 +109,8 @@ validation.json -> "status": "verified"
 ```
 
 Se a exportacao ONNX falhar ou o smoke test do ONNX Runtime nao passar, o pacote nao deve ser enviado como versao pronta.
+
+Na versao v6, o upload tambem depende do smoke test do pipeline completo de WAV. Uma falha nesse teste indica que o artefato ONNX pode ate abrir no ONNX Runtime, mas o fluxo Kaggle ainda nao esta pronto como base operacional do Lite CPU.
 
 ## Validacoes locais
 
