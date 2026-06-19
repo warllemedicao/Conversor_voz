@@ -138,3 +138,27 @@ Sempre manter `onnxscript` instalado no ambiente Kaggle quando o fluxo usa `torc
 
 ## Prevenção
 O pacote só deve ser considerado finalizado quando a validação ONNX passar e o upload imprimir `UPLOAD HUGGING FACE CONCLUIDO`. Mensagens de pacote pronto não devem depender apenas da existência da pasta de staging.
+
+---
+
+## Erro Identificado (Novo - 2026-06-19)
+**Tipo:** `TorchExportError` / `IndexError: Dimension out of range`
+**Local:** `kaggle/f5_tts_onnx_packager_kaggle.py` e script embutido em `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb`
+**Mensagem:** `audio_mask.sum(dim=1)` falhou com `expected to be in range of [-1, 0], but got 1` durante a exportação ONNX.
+**Causa:** O wrapper Turbo chamava o DiT com argumentos posicionais:
+
+```python
+self.transformer(x, cond, text_ids, time_steps, text_lengths)
+```
+
+Na assinatura do Transformer do F5-TTS, o quinto argumento não é `text_lengths`; ele é interpretado como controle/máscara de condicionamento de áudio (`drop_audio_cond`/máscara). Com isso, um tensor 1D (`[batch]`) era usado no caminho de `audio_mask`, e a operação `sum(dim=1)` falhava porque a dimensão 1 não existia.
+
+## Ação Tomada
+1. **Chamada nomeada do DiT:** O wrapper agora chama o Transformer como `self.transformer(x=x, cond=cond, text=text_ids, time=time_steps)`, eliminando a ambiguidade de argumentos posicionais.
+2. **Preservação do contrato ONNX:** `text_lengths` continua sendo entrada do grafo ONNX por meio de uma âncora dinâmica (`x + length_anchor - length_anchor`). Assim, o backend pode manter o contrato `[x, cond, text_ids, text_lengths, time_steps]` sem provocar erro no DiT.
+3. **Dtypes explícitos:** Os inputs de exemplo da exportação agora definem `float32`/`int64` explicitamente.
+4. **Versão atualizada:** O packager passou para `2026.06.19.turbo.v3`.
+5. **Sincronização:** O notebook Kaggle foi atualizado para gerar o mesmo script corrigido.
+
+## Prevenção
+Não passar parâmetros opcionais do F5-TTS por posição no wrapper ONNX. Para o DiT, usar argumentos nomeados e manter entradas extras do contrato ONNX ancoradas no grafo apenas quando elas forem necessárias para compatibilidade do backend.

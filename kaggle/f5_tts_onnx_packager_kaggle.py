@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 # Configurações de Caminhos e Versão
-PACKAGER_VERSION = "2026.06.17.turbo.v2"
+PACKAGER_VERSION = "2026.06.19.turbo.v3"
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
 
@@ -95,7 +95,12 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
             self.transformer = getattr(model, "transformer", model)
 
         def forward(self, x, cond, text_ids, text_lengths, time_steps):
-            return self.transformer(x, cond, text_ids, time_steps, text_lengths)
+            # DiT.forward espera (x, cond, text, time, ...). Passar
+            # text_lengths como quinto argumento posicional faz o modelo
+            # interpretá-lo como drop_audio_cond/mask e quebra audio_mask.sum(dim=1).
+            length_anchor = text_lengths.to(dtype=x.dtype).reshape(1, 1, 1)
+            x = x + length_anchor - length_anchor
+            return self.transformer(x=x, cond=cond, text=text_ids, time=time_steps)
 
     # Configuração da arquitetura (F5-TTS v1 Base)
     arch_cfg = {
@@ -117,11 +122,11 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
     
     # Exemplo de entrada para o tracer (FP32)
     example_inputs = (
-        torch.randn(1, 128, 100),          # x
-        torch.randn(1, 128, 100),          # cond
-        torch.randint(0, 100, (1, 64)),     # text_ids
-        torch.tensor([64]),                # text_lengths
-        torch.tensor([0.5]),               # time_steps
+        torch.randn(1, 128, 100, dtype=torch.float32),       # x
+        torch.randn(1, 128, 100, dtype=torch.float32),       # cond
+        torch.randint(0, 100, (1, 64), dtype=torch.int64),   # text_ids
+        torch.tensor([64], dtype=torch.int64),               # text_lengths
+        torch.tensor([0.5], dtype=torch.float32),            # time_steps
     )
 
     LOGGER.info("Iniciando torch.onnx.export (Turbo Contract)...")
@@ -155,6 +160,7 @@ def generate_metadata(paths: TurboPaths, source_info: dict):
             "x": [1, "duration", 100],
             "cond": [1, "duration", 100],
             "text_ids": [1, "text_len"],
+            "text_lengths": [1],
             "time_steps": [1]
         },
         "engine": "ONNX Runtime CPU / Cloud Run Turbo Backend"

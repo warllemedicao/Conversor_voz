@@ -1,85 +1,82 @@
-# Relatorio Voz_Noslen F5-TTS ONNX (Modo Lite)
+# Relatorio Voz_Noslen F5-TTS ONNX - Modo Turbo
 
-Este documento registra a intencao atual do notebook Kaggle e as correcoes aplicadas em 2026-06-17 para suporte ao **Modo Lite (Cloud Run)**.
+Este documento registra o estado atual do notebook Kaggle e do packager ONNX para a voz neural `Voz_Noslen`.
 
 ## Objetivo
 
-Gerar, no Kaggle, um pacote ONNX otimizado para execução no Cloud Run (Modo Lite) da voz neural treinada `Voz_Noslen`.
+Gerar, no Kaggle, um pacote Turbo para execução em backend Python com ONNX Runtime. O pacote exporta apenas o nucleo Transformer/DiT do F5-TTS; o loop de difusao, vocoder e demais controles de inferencia permanecem no backend.
 
-O pacote deve:
-- Seguir o contrato tecnico do motor SuperVoz-F5-Lite.
-- Preservar o checkpoint original `.pt` para metadados.
-- Exportar o ONNX com as entradas de controle (`speed`, `n_steps`).
+## Versao atual
 
-## Arquivos alterados
+```text
+PACKAGER_VERSION=2026.06.19.turbo.v3
+```
+
+## Arquivos sincronizados
 
 - `kaggle/f5_tts_onnx_packager_kaggle.py`
 - `kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb`
 - `kaggle/README_kaggle.md`
+- `kaggle/CORRECOES_ERROS.md`
 - `kaggle/RELATORIO_VOZ_NOSLEN_ONNX.md`
 
-## Formato final do pacote (Modo Lite)
-
-Estrutura obrigatoria:
+## Formato final do pacote
 
 ```text
-/onnx_package_name/
+turbo_staging_area/
 ├── onnx/
 │   └── f5_tts_transformer_core.onnx
 ├── model/
-│   ├── model_2000.pt
 │   └── vocab.txt
-└── reference/
-    └── referencia_voz.wav
+├── reference/
+│   └── referencia_voz.wav
+├── manifest.json
+├── metadata.json
+└── validation.json
 ```
 
-## Contrato tecnico do ONNX Lite
+## Contrato ONNX Turbo
 
-* **Arquivo**: `f5_tts_transformer_core.onnx`
-* **Opset**: 17
-* **Entradas (Inputs)**:
-    - `text_ids`: IDs do texto alvo.
-    - `text_lengths`: Comprimento do texto alvo.
-    - `ref_text_ids`: IDs do texto de referencia.
-    - `ref_text_lengths`: Comprimento do texto de referencia.
-    - `speed`: Fator de velocidade.
-    - `n_steps`: Numero de passos de inferencia (NFE).
-* **Saída (Output)**:
-    - `audio`: Waveform gerada (eixos dinâmicos).
+* **Arquivo:** `f5_tts_transformer_core.onnx`
+* **Opset:** 17
+* **Entradas:**
+    - `x`: tensor latente `float32`, shape `[1, duration, 100]`.
+    - `cond`: condicionamento mel `float32`, shape `[1, duration, 100]`.
+    - `text_ids`: IDs de texto `int64`, shape `[1, text_len]`.
+    - `text_lengths`: comprimento de texto `int64`, shape `[1]`.
+    - `time_steps`: tempo da difusao `float32`, shape `[1]`.
+* **Saida:**
+    - `dx`: velocidade prevista pelo Transformer, shape `[1, duration, 100]`.
 
-## Correcoes aplicadas (2026-06-17)
+## Correcao aplicada em 2026-06-19
 
-### 1. Atualização para Modo Lite
-Migração do antigo "Modo Turbo" para o "Modo Lite" compatível com Cloud Run. O ONNX agora recebe IDs de texto e parâmetros de controle diretamente.
+O erro informado no Kaggle nao indicava falha do checkpoint em si; a falha ocorreu na etapa de exportacao ONNX. O wrapper chamava o DiT com `text_lengths` como quinto argumento posicional, mas esse parametro era interpretado pelo F5-TTS como controle/máscara de audio. Isso fazia `audio_mask` chegar como tensor 1D e quebrava em `audio_mask.sum(dim=1)`.
 
-### 2. Preservação de Metadados
-O arquivo `model_2000.pt` é mantido no pacote final, pois o backend Lite o utiliza para ler a configuração da arquitetura `F5TTS_v1_Base` antes de carregar o grafo ONNX.
+A chamada foi corrigida para argumentos nomeados:
 
-### 3. Simplificação do Pacote
-Remoção de scripts e manifestos extras que não são utilizados pelo motor Lite, focando na estrutura de pastas `onnx/`, `model/` e `reference/`.
+```python
+self.transformer(x=x, cond=cond, text=text_ids, time=time_steps)
+```
 
-### 4. Correção TorchExportError (GuardOnDataDependentSymNode)
-Implementação de dicas simbólicas (`torch._check`) no wrapper de exportação para garantir que o comprimento dinâmico do áudio atenda às restrições das camadas de convolução do vocoder Vocos durante a exportação via Dynamo.
+Para preservar o contrato ONNX, `text_lengths` continua como entrada do grafo por uma ancora dinamica (`x + length_anchor - length_anchor`), sem ser repassado como argumento opcional do DiT.
 
-## Variaveis principais
+## Criterio para upload
+
+O upload so deve ser considerado seguro quando:
 
 ```text
-HF_SOURCE_URL=https://huggingface.co/buckets/warllem/Voz_Noslen
-HF_VOICE_DIR=voices/v_minha_voz_f5_tts_ptbr
-HF_UPLOAD_REPO_ID=warllem/Voz_Noslen_ONNX
-HF_DOWNLOAD_MODE=essential
-F5_ONNX_QUANTIZE=0
-F5_ONNX_RUN_CPU_TEST=1
+validation.json -> "status": "verified"
 ```
+
+Se a exportacao ONNX falhar ou o smoke test do ONNX Runtime nao passar, o pacote nao deve ser enviado como versao pronta.
 
 ## Validacoes locais
 
-Foram feitas validacoes sem baixar modelos grandes:
+Validacoes possiveis sem baixar modelos grandes:
 
 ```bash
 python -m py_compile kaggle/f5_tts_onnx_packager_kaggle.py
-python kaggle/f5_tts_onnx_packager_kaggle.py --help
 python -m json.tool kaggle/voz_noslen_f5_tts_onnx_kaggle.ipynb
 ```
 
-O teste real de exportacao ONNX depende do Kaggle com Internet e dependencias instaladas.
+O teste real de exportacao depende do ambiente Kaggle com Internet, `f5-tts`, checkpoint, vocabulario e audio de referencia baixados.
