@@ -9,7 +9,7 @@ Gerar, no Kaggle, um pacote Turbo para execução em backend Python com ONNX Run
 ## Versao atual
 
 ```text
-PACKAGER_VERSION=2026.06.19.turbo.v3
+PACKAGER_VERSION=2026.06.19.turbo.v4
 ```
 
 ## Arquivos sincronizados
@@ -59,6 +59,18 @@ self.transformer(x=x, cond=cond, text=text_ids, time=time_steps)
 ```
 
 Para preservar o contrato ONNX, `text_lengths` continua como entrada do grafo por uma ancora dinamica (`x + length_anchor - length_anchor`), sem ser repassado como argumento opcional do DiT.
+
+## Correcao complementar em 2026-06-19
+
+A execucao seguinte no Kaggle ainda falhou durante `torch.onnx.export`, depois do carregamento de `model_last.pt`, com a mesma mensagem curta `Dimension out of range`. A versao `2026.06.19.turbo.v4` tornou o wrapper mais explicito:
+
+- cria `audio_mask` 2D com shape `[batch, duration]` a partir de `x`;
+- passa `mask=audio_mask` somente quando a assinatura instalada do `transformer.forward` suporta esse argumento;
+- passa `cache=False` somente quando a assinatura suporta esse argumento;
+- registra no log a assinatura real de `transformer.forward`;
+- usa `LOGGER.exception` para imprimir traceback completo em novas falhas.
+
+Com isso, se o exportador entrar no caminho de `audio_mask.sum(dim=1)`, a máscara enviada pelo wrapper tem duas dimensoes e satisfaz o contrato esperado pelo DiT.
 
 ## Criterio para upload
 

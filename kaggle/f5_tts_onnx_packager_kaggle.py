@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 # Configurações de Caminhos e Versão
-PACKAGER_VERSION = "2026.06.19.turbo.v3"
+PACKAGER_VERSION = "2026.06.19.turbo.v4"
 DEFAULT_SOURCE_URL = "https://huggingface.co/buckets/warllem/Voz_Noslen"
 DEFAULT_VOICE_DIR = "voices/v_minha_voz_f5_tts_ptbr"
 
@@ -85,6 +85,7 @@ def copy_readonly(src: Path, dst: Path):
 def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths, manifest_data: dict):
     import torch
     import gc
+    import inspect
     from f5_tts.infer.utils_infer import load_model
     from hydra.utils import get_class
 
@@ -93,6 +94,9 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
         def __init__(self, model: Any) -> None:
             super().__init__()
             self.transformer = getattr(model, "transformer", model)
+            params = inspect.signature(self.transformer.forward).parameters
+            self.supports_mask = "mask" in params
+            self.supports_cache = "cache" in params
 
         def forward(self, x, cond, text_ids, text_lengths, time_steps):
             # DiT.forward espera (x, cond, text, time, ...). Passar
@@ -100,7 +104,13 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
             # interpretá-lo como drop_audio_cond/mask e quebra audio_mask.sum(dim=1).
             length_anchor = text_lengths.to(dtype=x.dtype).reshape(1, 1, 1)
             x = x + length_anchor - length_anchor
-            return self.transformer(x=x, cond=cond, text=text_ids, time=time_steps)
+            audio_mask = torch.ones_like(x[:, :, 0], dtype=torch.bool)
+            kwargs = {"x": x, "cond": cond, "text": text_ids, "time": time_steps}
+            if self.supports_mask:
+                kwargs["mask"] = audio_mask
+            if self.supports_cache:
+                kwargs["cache"] = False
+            return self.transformer(**kwargs)
 
     # Configuração da arquitetura (F5-TTS v1 Base)
     arch_cfg = {
@@ -119,6 +129,7 @@ def export_turbo_core(checkpoint_path: Path, vocab_path: Path, paths: TurboPaths
     model.eval()
     
     wrapped = F5TTSTurboWrapper(model).eval()
+    LOGGER.info(f"Assinatura transformer.forward: {inspect.signature(wrapped.transformer.forward)}")
     
     # Exemplo de entrada para o tracer (FP32)
     example_inputs = (
@@ -241,7 +252,7 @@ def main():
     try:
         export_turbo_core(ckpt, vocab, paths, {})
     except Exception as e:
-        LOGGER.error(f"Falha na exportação ONNX: {e}")
+        LOGGER.exception(f"Falha na exportação ONNX: {e}")
         sys.exit(1)
 
     # 3. Gerar Metadados e Manifest

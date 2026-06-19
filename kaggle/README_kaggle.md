@@ -1,6 +1,6 @@
 # Voz_Noslen F5-TTS ONNX (Modo Turbo)
 
-Versão atual do packager: `2026.06.19.turbo.v3`.
+Versão atual do packager: `2026.06.19.turbo.v4`.
 
 Este diretório contém as ferramentas para gerar o pacote **Turbo** do modelo F5-TTS `Voz_Noslen`. O pacote é projetado para execução eficiente em CPU (ONNX Runtime) e deploy em ambientes serverless como o Google Cloud Run.
 
@@ -70,3 +70,4 @@ HF_PRIVATE_REPO
 - **Sincronia:** O notebook gera automaticamente o script `.py` para garantir que a lógica de exportação esteja sempre atualizada.
 - **Validação:** O pacote só é considerado "Pronto" se passar no teste de carga do ONNX Runtime incluído no script.
 - **Contrato DiT:** O wrapper Turbo chama o Transformer com argumentos nomeados (`x`, `cond`, `text`, `time`). `text_lengths` permanece como entrada ONNX ancorada no grafo, mas não é passado como quinto argumento posicional para evitar que o F5-TTS o interprete como `drop_audio_cond`/máscara de áudio.
+- **Máscara de áudio:** O wrapper cria uma máscara 2D `[batch, duration]` a partir de `x` e a passa como `mask` quando a versão instalada do F5-TTS suporta esse argumento.

@@ -162,3 +162,22 @@ Na assinatura do Transformer do F5-TTS, o quinto argumento não é `text_lengths
 
 ## Prevenção
 Não passar parâmetros opcionais do F5-TTS por posição no wrapper ONNX. Para o DiT, usar argumentos nomeados e manter entradas extras do contrato ONNX ancoradas no grafo apenas quando elas forem necessárias para compatibilidade do backend.
+
+---
+
+## Erro Identificado (Novo - 2026-06-19, segunda execução)
+**Tipo:** `torch.onnx.export` / `IndexError: Dimension out of range`
+**Local:** `kaggle/f5_tts_onnx_packager_kaggle.py` durante `torch.onnx.export`
+**Mensagem:** Após `INFO: Iniciando torch.onnx.export (Turbo Contract)...`, o exportador legado emitiu `TracerWarning` em `TextEmbedding.forward` e falhou com `Dimension out of range (expected to be in range of [-1, 0], but got 1)`.
+**Causa provável:** A correção anterior removeu o `text_lengths` da posição errada, mas o caminho interno do DiT ainda podia acionar `audio_mask.sum(dim=1)` com uma máscara ausente, ambígua ou incompatível em alguma versão instalada do `f5-tts` no Kaggle. O log também não imprimia o traceback completo, dificultando confirmar o ponto exato da falha.
+
+## Ação Tomada
+1. **Máscara 2D explícita:** O wrapper agora cria `audio_mask = torch.ones_like(x[:, :, 0], dtype=torch.bool)`, garantindo shape `[batch, duration]` derivado diretamente do tensor `x`.
+2. **Compatibilidade por assinatura:** O wrapper inspeciona `transformer.forward` e só passa `mask=audio_mask` e `cache=False` quando esses argumentos existem na versão instalada do F5-TTS.
+3. **Diagnóstico reforçado:** O script registra `Assinatura transformer.forward` no log do Kaggle antes da exportação.
+4. **Traceback completo:** A captura de erro mudou de `LOGGER.error` para `LOGGER.exception`, então novas falhas mostram a pilha completa.
+5. **Versão atualizada:** O packager passou para `2026.06.19.turbo.v4`.
+6. **Sincronização:** O notebook Kaggle foi atualizado para gerar a versão v4 do script.
+
+## Prevenção
+Sempre que o wrapper depender de comportamento interno do F5-TTS, registrar a assinatura real do método chamado no ambiente Kaggle e passar máscaras com shape explícito `[batch, duration]`.
